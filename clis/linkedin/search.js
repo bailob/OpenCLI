@@ -402,7 +402,7 @@ cli({
     access: 'read',
     description: 'Search LinkedIn jobs',
     domain: 'www.linkedin.com',
-    strategy: Strategy.HEADER,
+    strategy: Strategy.COOKIE,
     browser: true,
     args: [
         { name: 'query', type: 'string', required: true, positional: true, help: 'Job search keywords' },

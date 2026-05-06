@@ -1593,8 +1593,7 @@
     ],
     "type": "js",
     "modulePath": "baidu-scholar/search.js",
-    "sourceFile": "baidu-scholar/search.js",
-    "navigateBefore": false
+    "sourceFile": "baidu-scholar/search.js"
   },
   {
     "site": "band",
@@ -9605,8 +9604,7 @@
     ],
     "type": "js",
     "modulePath": "google-scholar/cite.js",
-    "sourceFile": "google-scholar/cite.js",
-    "navigateBefore": false
+    "sourceFile": "google-scholar/cite.js"
   },
   {
     "site": "google-scholar",
@@ -9640,8 +9638,7 @@
     ],
     "type": "js",
     "modulePath": "google-scholar/profile.js",
-    "sourceFile": "google-scholar/profile.js",
-    "navigateBefore": false
+    "sourceFile": "google-scholar/profile.js"
   },
   {
     "site": "google-scholar",
@@ -9678,8 +9675,7 @@
     ],
     "type": "js",
     "modulePath": "google-scholar/search.js",
-    "sourceFile": "google-scholar/search.js",
-    "navigateBefore": false
+    "sourceFile": "google-scholar/search.js"
   },
   {
     "site": "goproxy",
@@ -9782,8 +9778,7 @@
     ],
     "type": "js",
     "modulePath": "gov-law/recent.js",
-    "sourceFile": "gov-law/recent.js",
-    "navigateBefore": false
+    "sourceFile": "gov-law/recent.js"
   },
   {
     "site": "gov-law",
@@ -9819,8 +9814,7 @@
     ],
     "type": "js",
     "modulePath": "gov-law/search.js",
-    "sourceFile": "gov-law/search.js",
-    "navigateBefore": false
+    "sourceFile": "gov-law/search.js"
   },
   {
     "site": "gov-policy",
@@ -9848,8 +9842,7 @@
     ],
     "type": "js",
     "modulePath": "gov-policy/recent.js",
-    "sourceFile": "gov-policy/recent.js",
-    "navigateBefore": false
+    "sourceFile": "gov-policy/recent.js"
   },
   {
     "site": "gov-policy",
@@ -9884,8 +9877,7 @@
     ],
     "type": "js",
     "modulePath": "gov-policy/search.js",
-    "sourceFile": "gov-policy/search.js",
-    "navigateBefore": false
+    "sourceFile": "gov-policy/search.js"
   },
   {
     "site": "grok",
@@ -10616,8 +10608,7 @@
     ],
     "type": "js",
     "modulePath": "hupu/detail.js",
-    "sourceFile": "hupu/detail.js",
-    "navigateBefore": false
+    "sourceFile": "hupu/detail.js"
   },
   {
     "site": "hupu",
@@ -10836,8 +10827,7 @@
     ],
     "type": "js",
     "modulePath": "hupu/search.js",
-    "sourceFile": "hupu/search.js",
-    "navigateBefore": false
+    "sourceFile": "hupu/search.js"
   },
   {
     "site": "hupu",
@@ -13316,7 +13306,7 @@
     "description": "Search LinkedIn jobs",
     "access": "read",
     "domain": "www.linkedin.com",
-    "strategy": "header",
+    "strategy": "cookie",
     "browser": true,
     "args": [
       {
@@ -20559,8 +20549,7 @@
     ],
     "type": "js",
     "modulePath": "tieba/hot.js",
-    "sourceFile": "tieba/hot.js",
-    "navigateBefore": false
+    "sourceFile": "tieba/hot.js"
   },
   {
     "site": "tieba",
@@ -22821,8 +22810,7 @@
     ],
     "type": "js",
     "modulePath": "wanfang/search.js",
-    "sourceFile": "wanfang/search.js",
-    "navigateBefore": false
+    "sourceFile": "wanfang/search.js"
   },
   {
     "site": "web",

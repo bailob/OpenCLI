@@ -8,7 +8,6 @@ export enum Strategy {
   PUBLIC = 'public',
   LOCAL = 'local',
   COOKIE = 'cookie',
-  HEADER = 'header',
   INTERCEPT = 'intercept',
   UI = 'ui',
 }
@@ -22,11 +21,6 @@ export interface Arg {
   positional?: boolean;
   help?: string;
   choices?: string[];
-}
-
-export interface RequiredEnv {
-  name: string;
-  help?: string;
 }
 
 export type CommandArgs = Record<string, any>;
@@ -50,7 +44,6 @@ interface BaseCliCommand {
   /** Origin of this command: 'yaml', 'ts', or plugin name. */
   source?: string;
   footerExtra?: (kwargs: CommandArgs) => string | undefined;
-  requiredEnv?: RequiredEnv[];
   validateArgs?: (kwargs: CommandArgs) => void;
   /** Deprecation note shown in help / execution warnings. */
   deprecated?: boolean | string;
@@ -142,7 +135,6 @@ export function cli(opts: CliOptions): CliCommand {
     func: opts.func,
     pipeline: opts.pipeline,
     footerExtra: opts.footerExtra,
-    requiredEnv: opts.requiredEnv,
     deprecated: opts.deprecated,
     replacedBy: opts.replacedBy,
     navigateBefore: opts.navigateBefore,
@@ -186,7 +178,7 @@ function normalizeCommand(cmd: RawCliCommand): CliCommand {
 
   let navigateBefore = cmd.navigateBefore;
   if (navigateBefore === undefined) {
-    if ((strategy === Strategy.COOKIE || strategy === Strategy.HEADER) && cmd.domain) {
+    if (strategy === Strategy.COOKIE && cmd.domain) {
       navigateBefore = `https://${cmd.domain}`;
     } else if (strategy !== Strategy.PUBLIC && strategy !== Strategy.LOCAL) {
       // Non-PUBLIC without domain: needs authenticated browser context

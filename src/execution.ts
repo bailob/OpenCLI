@@ -4,7 +4,7 @@
  * This is the single entry point for executing any CLI command. It handles:
  * 1. Argument validation and coercion
  * 2. Browser session lifecycle (if needed)
- * 3. Domain pre-navigation for cookie/header strategies
+ * 3. Domain pre-navigation for cookie strategies
  * 4. Timeout enforcement
  * 5. Lazy-loading of TS modules from manifest
  * 6. Lifecycle hooks (onBeforeExecute / onAfterExecute)
@@ -162,19 +162,6 @@ function resolvePreNav(cmd: CliCommand): string | null {
   return null;
 }
 
-function ensureRequiredEnv(cmd: CliCommand): void {
-  const missing = (cmd.requiredEnv ?? []).find(({ name }) => {
-    const value = process.env[name];
-    return value === undefined || value === null || value === '';
-  });
-  if (!missing) return;
-
-  throw new CommandExecutionError(
-    `Command ${fullName(cmd)} requires environment variable ${missing.name}.`,
-    missing.help ?? `Set ${missing.name} before running ${fullName(cmd)}.`,
-  );
-}
-
 export async function executeCommand(
   cmd: CliCommand,
   rawKwargs: CommandArgs,
@@ -227,7 +214,6 @@ export async function executeCommand(
         }
       }
 
-      ensureRequiredEnv(cmd);
       const BrowserFactory = getBrowserFactory(cmd.site);
       const contextId = resolveProfileContextId(opts.profile);
       const internal = cmd as InternalCliCommand;
