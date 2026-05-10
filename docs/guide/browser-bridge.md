@@ -23,6 +23,15 @@ That's it! The daemon auto-starts when you run any browser command. No tokens, n
 
 ```bash
 opencli doctor            # Check extension + daemon connectivity
+opencli profile list      # Inspect connected Chrome profiles
+```
+
+If you run multiple Chrome profiles, assign local aliases once and then route commands explicitly:
+
+```bash
+opencli profile rename <contextId> work
+opencli profile use work
+opencli --profile work browser state
 ```
 
 ## Tab Targeting
@@ -48,6 +57,24 @@ Key rules:
 - `tab select <targetId>` makes that tab the default target for later untargeted `opencli browser ...` commands.
 - `tab close <targetId>` removes the tab; if it was the current default target, the stored default is cleared.
 
+## Bind an existing Chrome tab
+
+Use binding when you already opened the right page manually and want OpenCLI to reuse that exact tab instead of opening a new automation tab.
+
+```bash
+opencli browser bind --domain example.com
+opencli browser --workspace bound:default state
+opencli browser --workspace bound:default click "Search"
+opencli browser unbind
+```
+
+Bound workspaces are intentionally stricter than normal automation workspaces:
+
+- OpenCLI does not own the user tab or window, so `unbind` never closes it.
+- `browser open` / `browser back` require `--allow-navigate-bound`.
+- `tab new`, `tab select`, and `tab close` are blocked for bound workspaces.
+- Re-run `bind` after you switch to a different real tab.
+
 ## How It Works
 
 ```
@@ -64,10 +91,12 @@ The daemon manages the WebSocket connection between your CLI commands and the Ch
 The daemon auto-starts on first browser command and stays alive persistently.
 
 ```bash
+opencli daemon status    # Inspect current bridge process
+opencli daemon restart   # Restart after upgrading OpenCLI or the extension
 opencli daemon stop      # Graceful shutdown
 ```
 
-The daemon is persistent — it stays alive until you explicitly stop it (`opencli daemon stop`) or uninstall the package.
+The daemon is persistent — it stays alive until you explicitly stop it, restart it, or uninstall the package. After `npm install -g @jackwener/opencli@latest`, `opencli daemon restart` is the safest way to ensure the browser bridge is running the new code.
 
 ## Running OpenCLI from a remote machine
 

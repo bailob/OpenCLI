@@ -15,7 +15,7 @@ OpenCLI turns **any website** or **Electron app** into a command-line interface 
 - **Browser Automation** — `browser` gives AI agents direct browser control: click, type/fill, extract, screenshot — fully scriptable.
 - **Website → CLI** — Turn any website into a deterministic CLI: 100+ site surfaces are already registered, or author your own with the `opencli-adapter-author` skill.
 - **Account-safe** — Reuses Chrome's logged-in state; your credentials never leave the browser.
-- **AI Agent ready** — `opencli browser *` primitives (`open` / `network` / `state` / `eval` / `init` / `verify`) drive the adapter-authoring loop.
+- **AI Agent ready** — `opencli browser *` primitives (`open` / `state` / `click` / `fill` / `network` / `bind` / `verify`) drive the adapter-authoring loop.
 - **Zero LLM cost** — No tokens consumed at runtime. Run 10,000 times and pay nothing.
 - **Deterministic** — Same command, same output schema, every time. Pipeable, scriptable, CI-friendly.
 
@@ -34,6 +34,7 @@ opencli list                              # See all commands
 opencli hackernews top --limit 5          # Public API, no browser
 opencli bilibili hot --limit 5            # Browser command
 opencli zhihu hot -f json                 # JSON output
+opencli convention-audit twitter          # Audit one adapter family
 ```
 
 ### Output Formats
@@ -66,7 +67,7 @@ opencli bilibili [Tab] # Complete commands (hot, search, me, download...)
 
 The completion includes:
 - All available sites and adapters
-- Built-in commands (list, validate, verify, browser, doctor, plugin...)
+- Built-in commands (`list`, `validate`, `verify`, `convention-audit`, `browser`, `doctor`, `plugin`, `adapter`, `profile`, `daemon`, `external`, ...)
 - Command aliases
 - Real-time updates as you add new adapters
 

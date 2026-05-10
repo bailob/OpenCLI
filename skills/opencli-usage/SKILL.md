@@ -78,12 +78,14 @@ A few commands override the default via `cmd.defaultFormat` (e.g. chat commands 
 | variable | default | purpose |
 |----------|---------|---------|
 | `OPENCLI_DAEMON_PORT` | `19825` | Daemon ↔ extension bridge port. |
+| `OPENCLI_PROFILE` | — | Browser Bridge profile alias/contextId when multiple Chrome profiles are connected. |
 | `OPENCLI_BROWSER_CONNECT_TIMEOUT` | `30` | Seconds to wait for the browser bridge. |
 | `OPENCLI_BROWSER_COMMAND_TIMEOUT` | `60` | Per-command timeout. |
 | `OPENCLI_CDP_ENDPOINT` | — | Manual CDP endpoint override (dev / remote Chrome / Electron). |
 | `OPENCLI_CACHE_DIR` | `~/.opencli/cache` | Network capture + browser-state cache. |
 | `OPENCLI_WINDOW` | command-specific | `foreground` or `background` browser window mode. |
 | `OPENCLI_KEEP_TAB` | command-specific | `true` or `false`; controls whether browser tab leases are kept after a command. |
+| `OPENCLI_BROWSER_REUSE` | adapter-specific | `none` or `site`; overrides browser-backed adapter tab reuse. |
 | `OPENCLI_VERBOSE` | `false` | Verbose logging (also triggered by `-v`). |
 
 ## Self-repair
@@ -135,7 +137,7 @@ opencli gh pr list --limit 5   # passthrough; stdio is inherited, exit code prop
 opencli docker ps
 ```
 
-Built-in entries live in `src/external-clis.yaml`; user overrides and additions in `~/.opencli/external-clis.yaml`. Commonly shipped: `gh`, `docker`, `vercel`, `lark-cli`, `dws`, `wecom-cli`, `obsidian`, `tg-cli`, `discord-cli`, `wx-cli`.
+Built-in entries live in `src/external-clis.yaml`; user overrides and additions in `~/.opencli/external-clis.yaml`. Use `opencli --help` or `opencli external list` as the live source of truth instead of memorizing a fixed list.
 
 ## Shell completion
 

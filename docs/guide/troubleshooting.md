@@ -37,11 +37,14 @@ curl localhost:19825/logs
 # Stop the daemon
 opencli daemon stop
 
+# Restart if you just upgraded OpenCLI or the extension
+opencli daemon restart
+
 # Full diagnostics
 opencli doctor
 ```
 
-> The daemon is persistent and stays alive until explicitly stopped (`opencli daemon stop`) or the package is uninstalled.
+> The daemon is persistent and stays alive until explicitly stopped or restarted. After upgrading OpenCLI, run `opencli daemon restart` once if the bridge still looks stale.
 
 ### Desktop adapter connection issues
 

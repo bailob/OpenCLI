@@ -14,7 +14,7 @@ OpenCLI gives you one surface for three different kinds of automation:
 - **Let AI Agents operate any website** — install the `opencli-adapter-author` skill in your AI agent (Claude Code, Cursor, etc.), and it can navigate, click, type/fill, extract, and inspect any page through your logged-in browser via `opencli browser` primitives.
 - **Write new adapters** end-to-end with `opencli browser` + the `opencli-adapter-author` skill, which guides from first recon through field decoding, code, and `opencli browser verify`.
 
-It also works as a **CLI hub** for local tools such as `gh`, `docker`, `tg-cli`, `discord-cli`, `wx-cli`, and other binaries you register yourself, plus **desktop app adapters** for Electron apps like Cursor, Codex, Antigravity, ChatGPT, and Notion.
+It also works as a **CLI hub** for local tools such as `gh`, `docker`, `vercel`, `lark-cli`, `dws`, `wecom-cli`, `obsidian`, and other binaries you register yourself, plus **desktop app adapters** for Electron apps like Cursor, Codex, Antigravity, ChatGPT, and Notion.
 
 ## Highlights
 
@@ -24,7 +24,7 @@ It also works as a **CLI hub** for local tools such as `gh`, `docker`, `tg-cli`,
 - **Website → CLI** — Turn any website into a deterministic CLI: 100+ site surfaces are already registered, or write your own with the `opencli-adapter-author` skill + `opencli browser verify`.
 - **Account-safe** — Reuses Chrome/Chromium logged-in state; your credentials never leave the browser.
 - **AI Agent ready** — One skill takes you from site recon through API discovery, field decoding, adapter writing, and verification.
-- **CLI Hub** — Discover, auto-install, and passthrough commands to any external CLI (gh, docker, obsidian, tg-cli, discord-cli, wx-cli, etc).
+- **CLI Hub** — Discover, auto-install, and passthrough commands to external CLIs such as `gh`, `docker`, `vercel`, `lark-cli`, `dws`, `wecom-cli`, and `obsidian`.
 - **Zero LLM cost** — No tokens consumed at runtime. Run 10,000 times and pay nothing.
 - **Deterministic** — Same command, same output schema, every time. Pipeable, scriptable, CI-friendly.
 
@@ -78,6 +78,7 @@ With only one connected profile, OpenCLI uses it automatically. With multiple co
 opencli list
 opencli hackernews top --limit 5
 opencli bilibili hot --limit 5
+opencli convention-audit twitter
 ```
 
 ## For Humans
@@ -87,6 +88,7 @@ Use OpenCLI directly when you want a reliable command instead of a live browser 
 - `opencli list` shows every registered command.
 - `opencli <site> <command>` runs a built-in or generated adapter.
 - `opencli external register mycli` exposes a local CLI through the same discovery surface.
+- `opencli convention-audit [target]` scans adapters for agent-native convention violations.
 - `opencli doctor` helps diagnose browser connectivity.
 
 ## Extending OpenCLI
@@ -150,7 +152,7 @@ The agent handles all the `opencli browser` commands internally — you just des
 - [`skills/opencli-usage/SKILL.md`](./skills/opencli-usage/SKILL.md) — command and site reference
 - [`skills/smart-search/SKILL.md`](./skills/smart-search/SKILL.md) — capability search
 
-Available browser commands include `open`, `state`, `click`, `type`, `fill`, `select`, `keys`, `wait`, `get`, `find`, `extract`, `frames`, `screenshot`, `scroll`, `back`, `eval`, `network`, `tab list`, `tab new`, `tab select`, `tab close`, `init`, `verify`, and `close`.
+Available browser commands include `open`, `state`, `click`, `type`, `fill`, `select`, `keys`, `wait`, `get`, `find`, `extract`, `frames`, `screenshot`, `scroll`, `back`, `eval`, `network`, `console`, `dialog`, `bind`, `unbind`, `tab list`, `tab new`, `tab select`, `tab close`, `init`, `verify`, and `close`.
 
 `opencli browser open <url>` and `opencli browser tab new [url]` both return a target ID. Use `opencli browser tab list` to inspect the target IDs of tabs that already exist, then pass `--tab <targetId>` to route a command to a specific tab. `tab new` creates a new tab without changing the default browser target; only `tab select <targetId>` promotes that tab to the default target for later untargeted `opencli browser ...` commands.
 
@@ -181,7 +183,7 @@ When the site you need is not yet covered, use the `opencli-adapter-author` skil
 
 OpenCLI is not only for websites. It can also:
 
-- expose local binaries like `gh`, `docker`, `obsidian`, `tg-cli`, `discord-cli`, `wx-cli`, or custom tools through `opencli <tool> ...`
+- expose local binaries like `gh`, `docker`, `vercel`, `lark-cli`, `dws`, `wecom-cli`, `obsidian`, or custom tools through `opencli <tool> ...`
 - control Electron desktop apps through dedicated adapters and CDP-backed integrations
 
 ## Prerequisites
@@ -214,6 +216,9 @@ OpenCLI is not only for websites. It can also:
 
 ```bash
 npm install -g @jackwener/opencli@latest
+
+# Restart the bridge if an old daemon is still running
+opencli daemon restart
 
 # If you use the packaged OpenCLI skills, refresh them too
 npx skills add jackwener/opencli
@@ -294,9 +299,6 @@ OpenCLI acts as a universal hub for your existing command-line tools — unified
 | **lark-cli** | Lark/Feishu — messages, docs, calendar, tasks, 200+ commands | `opencli lark-cli calendar +agenda` |
 | **dws** | DingTalk — cross-platform CLI for DingTalk's full suite, designed for humans and AI agents | `opencli dws msg send --to user "hello"` |
 | **wecom-cli** | WeCom/企业微信 — CLI for WeCom open platform, for humans and AI agents | `opencli wecom-cli msg send --to user "hello"` |
-| **tg-cli** | Telegram — local-first sync, search, and export via MTProto for AI agents | `opencli tg search "AI news" -f json` |
-| **discord-cli** | Discord — local-first sync, search, and export via SQLite for AI agents | `opencli discord recent --channel general` |
-| **wx-cli** | WeChat — query local WeChat data: sessions, messages, search, contacts, export | `opencli wx search "OpenCLI"` |
 | **vercel** | Vercel — deploy projects, manage domains, env vars, logs | `opencli vercel deploy --prod` |
 
 **Register your own** — add any local CLI so AI agents can discover it via `opencli list`:
