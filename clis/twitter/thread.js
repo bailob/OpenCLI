@@ -111,10 +111,8 @@ cli({
         const urlMatch = tweetId.match(/\/status\/(\d+)/);
         if (urlMatch)
             tweetId = urlMatch[1];
-        // Navigate to x.com for cookie context
-        await page.goto('https://x.com');
-        await page.wait(3);
-        // Read CSRF token directly from the cookie store via CDP — zero page.evaluate round-trip
+        // Cookie context auto-established by framework pre-nav (Strategy.COOKIE + domain).
+        // Read CSRF token directly from the cookie store via CDP — zero page.evaluate round-trip.
         const cookies = await page.getCookies({ url: 'https://x.com' });
         const ct0 = cookies.find((c) => c.name === 'ct0')?.value || null;
         if (!ct0)

@@ -98,8 +98,6 @@ export const command = cli({
     columns: ['id', 'name', 'members', 'followers', 'mode'],
     func: async (page, kwargs) => {
         const limit = kwargs.limit || 50;
-        await page.goto('https://x.com');
-        await page.wait(3);
         const cookies = await page.getCookies({ url: 'https://x.com' });
         const ct0 = cookies.find((c) => c.name === 'ct0')?.value || null;
         if (!ct0)
