@@ -17,7 +17,7 @@ import { formatDaemonVersion, isDaemonStale, staleDaemonIssue } from './browser/
 import { findShadowedUserAdapters, formatAdapterShadowIssue, type AdapterShadow } from './adapter-shadow.js';
 
 const DOCTOR_LIVE_TIMEOUT_SECONDS = 8;
-const DOCTOR_SESSION = 'doctor';
+const DOCTOR_SESSION = '__doctor__';
 
 /** Parse a semver string into [major, minor, patch]. Returns null on invalid input. */
 function parseSemver(v: string): [number, number, number] | null {

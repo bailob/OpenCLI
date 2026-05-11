@@ -208,7 +208,7 @@ describe('doctor report rendering', () => {
     const closeWindow = vi.fn().mockResolvedValue(undefined);
     mockConnect.mockImplementationOnce(async (opts?: { timeout?: number; session?: string; surface?: string }) => {
       timeoutSeen = opts?.timeout;
-      expect(opts?.session).toBe('doctor');
+      expect(opts?.session).toBe('__doctor__');
       expect(opts?.surface).toBe('browser');
       return {
         evaluate: vi.fn().mockResolvedValue(2),
