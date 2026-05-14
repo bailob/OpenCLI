@@ -1300,6 +1300,55 @@ describe('background tab isolation', () => {
     expect(chrome.tabs.group).toHaveBeenCalledWith({ groupId: 98, tabIds: [78] });
   });
 
+  it('uses the lowest group id as the final OpenCLI Adapter group tiebreaker', async () => {
+    const { chrome, tabs, groups, setLastFocusedWindowId } = createChromeMock();
+    setLastFocusedWindowId(2);
+    tabs.push({
+      id: 77,
+      windowId: 7,
+      url: 'about:blank',
+      title: 'blank',
+      active: true,
+      status: 'complete',
+      groupId: -1,
+    });
+    tabs.push({
+      id: 78,
+      windowId: 8,
+      url: 'about:blank',
+      title: 'blank',
+      active: true,
+      status: 'complete',
+      groupId: -1,
+    });
+    groups.push(
+      {
+        id: 99,
+        windowId: 7,
+        title: 'OpenCLI Adapter',
+        color: 'orange',
+        collapsed: true,
+      },
+      {
+        id: 98,
+        windowId: 8,
+        title: 'OpenCLI Adapter',
+        color: 'orange',
+        collapsed: true,
+      },
+    );
+    vi.stubGlobal('chrome', chrome);
+
+    const mod = await import('./background');
+    const tabId = await mod.__test__.resolveTabId(undefined, adapterKey('twitter'));
+
+    expect(tabId).toBe(78);
+    expect(chrome.windows.create).not.toHaveBeenCalled();
+    expect(mod.__test__.getAutomationWindowId(adapterKey('twitter'))).toBe(8);
+    expect(tabs.find((tab) => tab.id === 78)?.groupId).toBe(98);
+    expect(chrome.tabs.group).toHaveBeenCalledWith({ groupId: 98, tabIds: [78] });
+  });
+
   it('discovers and reuses a legacy OpenCLI automation group before creating a duplicate', async () => {
     const { chrome, tabs, groups } = createChromeMock();
     tabs.push({
