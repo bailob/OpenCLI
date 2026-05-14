@@ -283,13 +283,14 @@ To load the source Browser Bridge extension:
 
 ## CLI Hub
 
-OpenCLI acts as a universal hub for your existing command-line tools — unified discovery, pure passthrough execution, and auto-install (if a tool isn't installed, OpenCLI runs `brew install <tool>` automatically before re-running the command).
+OpenCLI acts as a universal hub for your existing command-line tools — unified discovery, pure passthrough execution, and auto-install when a safe package-manager command is configured.
 
 | External CLI | Description | Example |
 |--------------|-------------|---------|
 | **gh** | GitHub CLI | `opencli gh pr list --limit 5` |
 | **obsidian** | Obsidian vault management | `opencli obsidian search query="AI"` |
 | **docker** | Docker | `opencli docker ps` |
+| **ntn** | Notion CLI — official Notion API CLI for pages, databases, blocks, search, comments | `opencli ntn pages list` |
 | **lark-cli** | Lark/Feishu — messages, docs, calendar, tasks, 200+ commands | `opencli lark-cli calendar +agenda` |
 | **dws** | DingTalk — cross-platform CLI for DingTalk's full suite, designed for humans and AI agents | `opencli dws msg send --to user "hello"` |
 | **wecom-cli** | WeCom/企业微信 — CLI for WeCom open platform, for humans and AI agents | `opencli wecom-cli msg send --to user "hello"` |

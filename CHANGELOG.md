@@ -4,7 +4,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **notion** — remove the in-tree `clis/notion/` CDP-on-Desktop adapter (8 commands: status / search / read / new / write / sidebar / favorites / export). Notion has shipped an official CLI at <https://ntn.dev>, which is registered as a first-class external CLI in `external-clis.yaml`. Migration: `curl -fsSL https://ntn.dev | bash` (or `opencli external install ntn`) and use `opencli ntn <command>`. The official CLI uses the public Notion API rather than reverse-engineering the Desktop UI, so it survives Notion app updates and exposes a wider command surface (blocks / databases / properties / comments) than the reverse-engineered adapter could.
+* **notion** — remove the in-tree `clis/notion/` CDP-on-Desktop adapter (8 commands: status / search / read / new / write / sidebar / favorites / export). Notion has shipped an official CLI at <https://ntn.dev>, which is registered as a first-class external CLI in `external-clis.yaml`. Migration: install `ntn` from <https://ntn.dev> (`curl -fsSL https://ntn.dev | bash`), then use `opencli ntn <command>`. Auto-install is intentionally not configured because the official installer is a shell script while OpenCLI external installs run shell-free command strings. The official CLI uses the public Notion API rather than reverse-engineering the Desktop UI, so it survives Notion app updates and exposes a wider command surface (blocks / databases / properties / comments) than the reverse-engineered adapter could.
 
 ## [1.7.19](https://github.com/jackwener/opencli/compare/v1.7.18...v1.7.19) (2026-05-14)
 

@@ -19,9 +19,6 @@
   description: "Notion CLI — official Notion API CLI for pages, databases, blocks, search, comments"
   homepage: "https://ntn.dev"
   tags: [notion, notes, knowledge, productivity]
-  install:
-    mac: "curl -fsSL https://ntn.dev | bash"
-    linux: "curl -fsSL https://ntn.dev | bash"
 
 - name: docker
   binary: docker

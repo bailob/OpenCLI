@@ -332,6 +332,7 @@ OpenCLI 也可以作为你现有命令行工具的统一入口，负责发现、
 | **gh** | GitHub CLI | `opencli gh pr list --limit 5` |
 | **obsidian** | Obsidian 仓库管理 | `opencli obsidian search query="AI"` |
 | **docker** | Docker 命令行工具 | `opencli docker ps` |
+| **ntn** | Notion CLI — 基于官方 Notion API 的页面、数据库、块、搜索、评论命令 | `opencli ntn pages list` |
 | **lark-cli** | 飞书 CLI — 消息、文档、日历、任务，200+ 命令 | `opencli lark-cli calendar +agenda` |
 | **dws** | 钉钉 CLI — 钉钉全套产品能力的跨平台命令行工具，支持人类和 AI Agent 使用 | `opencli dws msg send --to user "hello"` |
 | **wecom-cli** | 企业微信 CLI — 企业微信开放平台命令行工具，支持人类和 AI Agent 使用 | `opencli wecom-cli msg send --to user "hello"` |
@@ -342,7 +343,7 @@ OpenCLI 也可以作为你现有命令行工具的统一入口，负责发现、
 
 **零配置透传**：OpenCLI 会把你的输入原样转发给底层二进制，保留原生 stdout / stderr 行为。
 
-**自动安装**：如果你运行 `opencli gh ...` 时系统中还没有 `gh`，OpenCLI 会优先尝试通过系统包管理器安装，然后自动重试命令。
+**自动安装**：如果某个外部 CLI 配置了安全的包管理器安装命令，OpenCLI 会优先尝试安装后再执行；`ntn` 的官方安装方式是 shell 脚本，请先按 <https://ntn.dev> 手动安装。
 
 **注册自定义本地 CLI**：
 
