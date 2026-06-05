@@ -31,6 +31,7 @@ describe('site auth command helper', () => {
       browser: true,
       navigateBefore: false,
       defaultWindowMode: 'foreground',
+      siteSession: 'persistent',
       columns: ['status', 'logged_in', 'site', 'username'],
     });
   });

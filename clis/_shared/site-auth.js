@@ -67,6 +67,7 @@ export function registerSiteAuthCommands(config) {
     browser: true,
     navigateBefore: false,
     defaultWindowMode: 'foreground',
+    siteSession: 'persistent',
     args: [
       { name: 'timeout', type: 'int', default: DEFAULT_TIMEOUT_SECONDS, help: 'Maximum seconds to wait for the user to finish login' },
     ],

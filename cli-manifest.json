@@ -3415,6 +3415,7 @@
     "modulePath": "bilibili/auth.js",
     "sourceFile": "bilibili/auth.js",
     "navigateBefore": false,
+    "siteSession": "persistent",
     "defaultWindowMode": "foreground"
   },
   {
@@ -10369,6 +10370,7 @@
     "modulePath": "douyin/auth.js",
     "sourceFile": "douyin/auth.js",
     "navigateBefore": false,
+    "siteSession": "persistent",
     "defaultWindowMode": "foreground"
   },
   {
@@ -12506,6 +12508,7 @@
     "modulePath": "github/auth.js",
     "sourceFile": "github/auth.js",
     "navigateBefore": false,
+    "siteSession": "persistent",
     "defaultWindowMode": "foreground"
   },
   {
@@ -30380,6 +30383,7 @@
     "modulePath": "twitter/auth.js",
     "sourceFile": "twitter/auth.js",
     "navigateBefore": false,
+    "siteSession": "persistent",
     "defaultWindowMode": "foreground"
   },
   {
@@ -34417,6 +34421,7 @@
     "modulePath": "xiaohongshu/auth.js",
     "sourceFile": "xiaohongshu/auth.js",
     "navigateBefore": false,
+    "siteSession": "persistent",
     "defaultWindowMode": "foreground"
   },
   {
