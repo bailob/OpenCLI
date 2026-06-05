@@ -1147,7 +1147,7 @@ async function attachTabsToOwnedGroup(role, group, ids) {
   updateOwnedSessionWindowForTabs(role, ids, group.windowId);
   return group;
 }
-async function createOwnedGroupWithRollback(role, windowId, ids) {
+async function createOwnedGroup(role, windowId, ids) {
   if (ids.length === 0) throw new Error(`Cannot create ${role} tab group without tabs`);
   await ensureTabsInWindow(ids, windowId);
   const groupId = await chrome.tabs.group({ tabIds: ids, createProperties: { windowId } });
@@ -1183,7 +1183,7 @@ async function ensureOwnedContainerGroupUnlocked(role, fallbackWindowId, ids) {
       canonical = await ensureCanonicalGroupTitle(role, canonical);
       canonical = await attachTabsToOwnedGroup(role, canonical, ids);
     } else if (fallbackWindowId !== null && ids.length > 0) {
-      canonical = await createOwnedGroupWithRollback(role, fallbackWindowId, ids);
+      canonical = await createOwnedGroup(role, fallbackWindowId, ids);
     }
     if (canonical) {
       ownedContainers[role].windowId = canonical.windowId;

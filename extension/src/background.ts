@@ -697,7 +697,7 @@ async function attachTabsToOwnedGroup(
   return group;
 }
 
-async function createOwnedGroupWithRollback(
+async function createOwnedGroup(
   role: OwnedWindowRole,
   windowId: number,
   ids: number[],
@@ -757,7 +757,7 @@ async function ensureOwnedContainerGroupUnlocked(
       canonical = await ensureCanonicalGroupTitle(role, canonical);
       canonical = await attachTabsToOwnedGroup(role, canonical, ids);
     } else if (fallbackWindowId !== null && ids.length > 0) {
-      canonical = await createOwnedGroupWithRollback(role, fallbackWindowId, ids);
+      canonical = await createOwnedGroup(role, fallbackWindowId, ids);
     }
 
     if (canonical) {
