@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* **auth** — add `opencli auth refresh-scheduled` for OpenCLI App's App-alive daily auth refresh MVP. The command reads the App-owned `auth-refresh-config.json`, writes the core-owned `auth-refresh-state.json`, applies per-site schedule jitter and simple backoff, and reuses the existing `auth refresh` primitive without mixing with the manual `~/.opencli/auth-refresh.json` state.
+
 ## [1.8.3](https://github.com/jackwener/opencli/compare/v1.8.2...v1.8.3) (2026-06-06)
 
 Patch release focused on two architectural fixes around extension and daemon lifecycle, plus the first wave of the new site auth subsystem.

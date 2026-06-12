@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ vi.mock('../execution.js', () => ({
   executeCommand: executeCommandMock,
 }));
 
-import { collectAuthRefresh, collectAuthStatus } from './auth.js';
+import { collectAuthRefresh, collectAuthRefreshScheduled, collectAuthStatus } from './auth.js';
 import { AuthRequiredError } from '../errors.js';
 import { cli, getRegistry, Strategy } from '../registry.js';
 
@@ -42,6 +42,18 @@ function registerWhoami(site: string, opts: {
 async function tempStatePath(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'opencli-auth-refresh-test-'));
   return join(dir, 'auth-refresh.json');
+}
+
+async function tempAppAuthRefreshPaths(): Promise<{ configPath: string; runStatePath: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'opencli-app-auth-refresh-test-'));
+  return {
+    configPath: join(dir, 'auth-refresh-config.json'),
+    runStatePath: join(dir, 'auth-refresh-state.json'),
+  };
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
 beforeEach(() => {
@@ -293,5 +305,163 @@ describe('auth refresh collection', () => {
       },
     ]);
     expect(executeCommandMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('auth refresh scheduled collection', () => {
+  it('does nothing when the App auth refresh config is disabled', async () => {
+    registerWhoami('alpha', { quick: true, quickLoggedIn: true });
+    const { configPath, runStatePath } = await tempAppAuthRefreshPaths();
+    await writeJson(configPath, { enabled: false, scheduleTime: '03:00', perSiteEnabled: {} });
+
+    const rows = await collectAuthRefreshScheduled({
+      configPath,
+      runStatePath,
+      now: new Date('2026-06-06T04:00:00.000Z'),
+    });
+
+    expect(rows).toEqual([]);
+    expect(executeCommandMock).not.toHaveBeenCalled();
+    const state = JSON.parse(await readFile(runStatePath, 'utf8'));
+    expect(state.lastFullRun).toBe('@1780718400');
+    expect(state.lastFullRunSummary).toBe('No due sites');
+  });
+
+  it('runs due enabled sites and writes App-shaped run state timestamps', async () => {
+    registerWhoami('alpha', { quick: true, quickLoggedIn: true });
+    const { configPath, runStatePath } = await tempAppAuthRefreshPaths();
+    await writeJson(configPath, { enabled: true, scheduleTime: '03:00', perSiteEnabled: {} });
+    const now = new Date('2026-06-06T04:00:00.000Z');
+
+    const rows = await collectAuthRefreshScheduled({
+      sites: 'alpha',
+      configPath,
+      runStatePath,
+      now,
+      jitterMinutes: 1,
+    });
+
+    expect(rows).toEqual([
+      {
+        site: 'alpha',
+        status: 'touched',
+        lastAttempt: '@1780718400',
+        lastTouched: '@1780718400',
+        message: '',
+      },
+    ]);
+    expect(executeCommandMock).toHaveBeenCalledTimes(1);
+    const state = JSON.parse(await readFile(runStatePath, 'utf8'));
+    expect(state).toMatchObject({
+      schemaVersion: 1,
+      lastFullRun: '@1780718400',
+      lastFullRunSummary: '1 touched',
+      perSite: {
+        alpha: {
+          lastAttempt: '@1780718400',
+          lastTouched: '@1780718400',
+          status: 'touched',
+          consecutiveFailures: 0,
+        },
+      },
+    });
+  });
+
+  it('skips sites before their scheduled due window', async () => {
+    registerWhoami('beta', { quick: true, quickLoggedIn: true });
+    const { configPath, runStatePath } = await tempAppAuthRefreshPaths();
+    await writeJson(configPath, { enabled: true, scheduleTime: '03:00', perSiteEnabled: {} });
+    await writeJson(runStatePath, {
+      schemaVersion: 1,
+      perSite: {
+        beta: { lastAttempt: '@1780711200', status: 'touched', consecutiveFailures: 0 },
+      },
+    });
+
+    const rows = await collectAuthRefreshScheduled({
+      sites: 'beta',
+      configPath,
+      runStatePath,
+      now: new Date('2026-06-06T04:00:00.000Z'),
+      jitterMinutes: 1,
+    });
+
+    expect(rows).toEqual([]);
+    expect(executeCommandMock).not.toHaveBeenCalled();
+  });
+
+  it('honors per-site disabled overrides and failure backoff', async () => {
+    registerWhoami('alpha', { quick: true, quickLoggedIn: true });
+    registerWhoami('beta', { quick: true, quickLoggedIn: true });
+    registerWhoami('gamma', { quick: true, quickLoggedIn: true });
+    const { configPath, runStatePath } = await tempAppAuthRefreshPaths();
+    await writeJson(configPath, {
+      enabled: true,
+      scheduleTime: '03:00',
+      perSiteEnabled: { beta: false },
+    });
+    await writeJson(runStatePath, {
+      schemaVersion: 1,
+      perSite: {
+        gamma: { status: 'error', consecutiveFailures: 3, lastAttempt: '@1780632000' },
+      },
+    });
+
+    const rows = await collectAuthRefreshScheduled({
+      configPath,
+      runStatePath,
+      now: new Date('2026-06-06T04:00:00.000Z'),
+      jitterMinutes: 1,
+    });
+
+    expect(rows.map(row => row.site)).toEqual(['alpha']);
+    expect(executeCommandMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('records unsupported sites in App run state', async () => {
+    registerWhoami('eta');
+    const { configPath, runStatePath } = await tempAppAuthRefreshPaths();
+    await writeJson(configPath, { enabled: true, scheduleTime: '03:00', perSiteEnabled: {} });
+
+    const rows = await collectAuthRefreshScheduled({
+      sites: 'eta',
+      configPath,
+      runStatePath,
+      now: new Date('2026-06-06T04:00:00.000Z'),
+      jitterMinutes: 1,
+    });
+
+    expect(rows).toEqual([
+      {
+        site: 'eta',
+        status: 'unsupported',
+        lastAttempt: '@1780718400',
+        lastTouched: '',
+        message: 'refresh probe is not available for this site',
+      },
+    ]);
+    const state = JSON.parse(await readFile(runStatePath, 'utf8'));
+    expect(state.perSite.eta).toMatchObject({
+      lastAttempt: '@1780718400',
+      status: 'unsupported',
+      message: 'refresh probe is not available for this site',
+      consecutiveFailures: 0,
+    });
+  });
+
+  it('allows zero jitter for deterministic scheduler debugging', async () => {
+    registerWhoami('theta', { quick: true, quickLoggedIn: true });
+    const { configPath, runStatePath } = await tempAppAuthRefreshPaths();
+    await writeJson(configPath, { enabled: true, scheduleTime: '03:00', perSiteEnabled: {} });
+
+    const rows = await collectAuthRefreshScheduled({
+      sites: 'theta',
+      configPath,
+      runStatePath,
+      now: new Date('2026-06-06T03:00:00.000Z'),
+      jitterMinutes: 0,
+    });
+
+    expect(rows[0]?.status).toBe('touched');
   });
 });

@@ -18,9 +18,13 @@ import { render as renderOutput } from '../output.js';
 type AuthStatus = 'logged_in' | 'not_logged_in' | 'unknown' | 'error';
 type AuthStatusMode = 'quick' | 'full';
 type AuthRefreshStatus = 'refreshed' | 'touched' | 'not_logged_in' | 'skipped' | 'unsupported' | 'error';
+type AppAuthRefreshStatus = 'pending' | 'touched' | 'refreshed' | 'not_logged_in' | 'error' | 'unsupported';
 
 const AUTH_REFRESH_STATE_VERSION = 1;
 const AUTH_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const APP_AUTH_REFRESH_SCHEMA_VERSION = 1;
+const APP_AUTH_REFRESH_FAILURE_LIMIT = 3;
+const APP_AUTH_REFRESH_DEFAULT_JITTER_MINUTES = 120;
 
 export interface AuthStatusRow {
   site: string;
@@ -58,6 +62,17 @@ interface AuthRefreshOptions {
   now?: Date;
 }
 
+interface AuthRefreshScheduledOptions {
+  sites?: string;
+  all?: boolean;
+  timeout?: string | number;
+  profile?: string;
+  configPath?: string;
+  runStatePath?: string;
+  now?: Date;
+  jitterMinutes?: string | number;
+}
+
 interface AuthRefreshSiteState {
   last_touched_at?: string;
   last_attempt_at?: string;
@@ -69,11 +84,50 @@ interface AuthRefreshState {
   sites: Record<string, AuthRefreshSiteState>;
 }
 
+interface AppAuthRefreshConfig {
+  schemaVersion?: number;
+  enabled?: boolean;
+  scheduleTime?: string;
+  perSiteEnabled?: Record<string, boolean>;
+}
+
+interface AppAuthRefreshSiteEntry {
+  lastAttempt?: string;
+  lastTouched?: string;
+  status?: AppAuthRefreshStatus;
+  message?: string;
+  consecutiveFailures?: number;
+}
+
+interface AppAuthRefreshRunState {
+  schemaVersion?: number;
+  lastFullRun?: string;
+  lastFullRunSummary?: string;
+  perSite?: Record<string, AppAuthRefreshSiteEntry>;
+}
+
+export interface AppAuthRefreshScheduledRow {
+  site: string;
+  status: AppAuthRefreshStatus | 'skipped';
+  lastAttempt: string;
+  lastTouched: string;
+  message: string;
+}
+
 function parsePositiveInt(raw: string | number | undefined, label: string, fallback: number): number {
   if (raw === undefined || raw === null || raw === '') return fallback;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new InvalidArgumentError(`${label} must be a positive integer. Received: "${String(raw)}"`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeInt(raw: string | number | undefined, label: string, fallback: number): number {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new InvalidArgumentError(`${label} must be a non-negative integer. Received: "${String(raw)}"`);
   }
   return parsed;
 }
@@ -86,6 +140,18 @@ function parseSiteFilter(raw: string | undefined): Set<string> | null {
 
 function defaultAuthRefreshStatePath(): string {
   return join(homedir(), '.opencli', 'auth-refresh.json');
+}
+
+function openCliAppSupportDir(): string {
+  return join(homedir(), 'Library', 'Application Support', 'OpenCLI App');
+}
+
+function defaultAppAuthRefreshConfigPath(): string {
+  return join(openCliAppSupportDir(), 'auth-refresh-config.json');
+}
+
+function defaultAppAuthRefreshRunStatePath(): string {
+  return join(openCliAppSupportDir(), 'auth-refresh-state.json');
 }
 
 function emptyAuthRefreshState(): AuthRefreshState {
@@ -109,10 +175,68 @@ async function saveAuthRefreshState(statePath: string, state: AuthRefreshState):
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
+async function loadAppAuthRefreshConfig(configPath: string): Promise<AppAuthRefreshConfig> {
+  try {
+    const parsed = JSON.parse(await readFile(configPath, 'utf8')) as Partial<AppAuthRefreshConfig>;
+    return {
+      schemaVersion: APP_AUTH_REFRESH_SCHEMA_VERSION,
+      enabled: parsed.enabled === true,
+      scheduleTime: typeof parsed.scheduleTime === 'string' ? parsed.scheduleTime : '03:00',
+      perSiteEnabled: parsed.perSiteEnabled && typeof parsed.perSiteEnabled === 'object'
+        ? parsed.perSiteEnabled as Record<string, boolean>
+        : {},
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  return { schemaVersion: APP_AUTH_REFRESH_SCHEMA_VERSION, enabled: false, scheduleTime: '03:00', perSiteEnabled: {} };
+}
+
+async function loadAppAuthRefreshRunState(runStatePath: string): Promise<AppAuthRefreshRunState> {
+  try {
+    const parsed = JSON.parse(await readFile(runStatePath, 'utf8')) as Partial<AppAuthRefreshRunState>;
+    return {
+      schemaVersion: APP_AUTH_REFRESH_SCHEMA_VERSION,
+      lastFullRun: typeof parsed.lastFullRun === 'string' ? parsed.lastFullRun : undefined,
+      lastFullRunSummary: typeof parsed.lastFullRunSummary === 'string' ? parsed.lastFullRunSummary : undefined,
+      perSite: parsed.perSite && typeof parsed.perSite === 'object'
+        ? parsed.perSite as Record<string, AppAuthRefreshSiteEntry>
+        : {},
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  return { schemaVersion: APP_AUTH_REFRESH_SCHEMA_VERSION, perSite: {} };
+}
+
+async function saveAppAuthRefreshRunState(runStatePath: string, state: AppAuthRefreshRunState): Promise<void> {
+  await mkdir(dirname(runStatePath), { recursive: true });
+  await writeFile(runStatePath, `${JSON.stringify({
+    schemaVersion: APP_AUTH_REFRESH_SCHEMA_VERSION,
+    lastFullRun: state.lastFullRun,
+    lastFullRunSummary: state.lastFullRunSummary,
+    perSite: state.perSite ?? {},
+  }, null, 2)}\n`, 'utf8');
+}
+
 function lastTouchedMs(entry: AuthRefreshSiteState | undefined): number | null {
   if (!entry?.last_touched_at) return null;
   const parsed = Date.parse(entry.last_touched_at);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseAppTimestamp(value: string | undefined): number | null {
+  if (!value) return null;
+  if (value.startsWith('@')) {
+    const parsed = Number(value.slice(1));
+    return Number.isFinite(parsed) ? parsed * 1000 : null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatAppTimestamp(date: Date): string {
+  return `@${Math.floor(date.getTime() / 1000)}`;
 }
 
 function isRefreshThrottled(entry: AuthRefreshSiteState | undefined, now: Date): boolean {
@@ -123,6 +247,104 @@ function isRefreshThrottled(entry: AuthRefreshSiteState | undefined, now: Date):
 function nextRefreshAt(entry: AuthRefreshSiteState | undefined): string {
   const touched = lastTouchedMs(entry);
   return touched === null ? '' : new Date(touched + AUTH_REFRESH_INTERVAL_MS).toISOString();
+}
+
+function parseScheduleTime(raw: string | undefined): { hour: number; minute: number } {
+  const match = /^(\d{2}):(\d{2})$/.exec(raw ?? '03:00');
+  if (!match) return { hour: 3, minute: 0 };
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return { hour: 3, minute: 0 };
+  }
+  return { hour, minute };
+}
+
+function stableSiteJitterMs(site: string, maxMinutes: number): number {
+  if (maxMinutes <= 0) return 0;
+  let hash = 2166136261;
+  for (const char of site) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  const minutes = Math.abs(hash >>> 0) % (maxMinutes + 1);
+  return minutes * 60 * 1000;
+}
+
+function scheduledDueAt(site: string, scheduleTime: string | undefined, now: Date, jitterMinutes: number): number {
+  const { hour, minute } = parseScheduleTime(scheduleTime);
+  const candidate = new Date(now);
+  candidate.setHours(hour, minute, 0, 0);
+  candidate.setTime(candidate.getTime() + stableSiteJitterMs(site, jitterMinutes));
+  if (candidate.getTime() > now.getTime()) {
+    candidate.setDate(candidate.getDate() - 1);
+  }
+  return candidate.getTime();
+}
+
+function appSiteEnabled(config: AppAuthRefreshConfig, site: string): boolean {
+  const override = config.perSiteEnabled?.[site];
+  return typeof override === 'boolean' ? override : config.enabled === true;
+}
+
+function appEntryToRefreshState(entry: AppAuthRefreshSiteEntry | undefined): AuthRefreshSiteState | undefined {
+  if (!entry) return undefined;
+  const lastTouched = parseAppTimestamp(entry.lastTouched);
+  const lastAttempt = parseAppTimestamp(entry.lastAttempt);
+  return {
+    ...(lastTouched !== null ? { last_touched_at: new Date(lastTouched).toISOString() } : {}),
+    ...(lastAttempt !== null ? { last_attempt_at: new Date(lastAttempt).toISOString() } : {}),
+    ...(entry.status ? { last_status: entry.status === 'pending' ? undefined : entry.status } : {}),
+  };
+}
+
+function shouldRunScheduledSite(
+  site: string,
+  entry: AppAuthRefreshSiteEntry | undefined,
+  config: AppAuthRefreshConfig,
+  now: Date,
+  jitterMinutes: number,
+  force: boolean,
+): boolean {
+  if (force) return true;
+  if (entry?.status === 'unsupported') return false;
+  if ((entry?.consecutiveFailures ?? 0) >= APP_AUTH_REFRESH_FAILURE_LIMIT) return false;
+  const lastAttempt = parseAppTimestamp(entry?.lastAttempt);
+  if (lastAttempt === null) return true;
+  return lastAttempt < scheduledDueAt(site, config.scheduleTime, now, jitterMinutes);
+}
+
+function updateAppRunStateFromRefreshRow(
+  runState: AppAuthRefreshRunState,
+  row: AuthRefreshRow,
+  now: Date,
+): AppAuthRefreshSiteEntry {
+  const previous = runState.perSite?.[row.site] ?? {};
+  const lastAttempt = formatAppTimestamp(now);
+  const success = row.status === 'touched' || row.status === 'refreshed';
+  const status: AppAuthRefreshStatus = row.status === 'skipped' ? 'pending' : row.status;
+  const next: AppAuthRefreshSiteEntry = {
+    ...previous,
+    lastAttempt,
+    status,
+    message: row.error || undefined,
+    consecutiveFailures: row.status === 'error' ? (previous.consecutiveFailures ?? 0) + 1 : 0,
+  };
+  if (success) {
+    next.lastTouched = lastAttempt;
+  }
+  if (row.status === 'not_logged_in' || row.status === 'unsupported') {
+    next.consecutiveFailures = 0;
+  }
+  runState.perSite = { ...(runState.perSite ?? {}), [row.site]: next };
+  return next;
+}
+
+function scheduledSummary(rows: AppAuthRefreshScheduledRow[]): string {
+  if (rows.length === 0) return 'No due sites';
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+  return [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(', ');
 }
 
 function authWhoamiCommands(): CliCommand[] {
@@ -453,6 +675,64 @@ export async function collectAuthRefresh(options: AuthRefreshOptions): Promise<A
   return rows;
 }
 
+export async function collectAuthRefreshScheduled(options: AuthRefreshScheduledOptions): Promise<AppAuthRefreshScheduledRow[]> {
+  const selectedSites = parseSiteFilter(options.sites);
+  const timeoutSeconds = parsePositiveInt(options.timeout, '--timeout', 20);
+  const jitterMinutes = parseNonNegativeInt(options.jitterMinutes, '--jitter-minutes', APP_AUTH_REFRESH_DEFAULT_JITTER_MINUTES);
+  const now = options.now ?? new Date();
+  const configPath = options.configPath ?? defaultAppAuthRefreshConfigPath();
+  const runStatePath = options.runStatePath ?? defaultAppAuthRefreshRunStatePath();
+  const config = await loadAppAuthRefreshConfig(configPath);
+  const runState = await loadAppAuthRefreshRunState(runStatePath);
+  runState.perSite = runState.perSite ?? {};
+
+  const dueCommands = authWhoamiCommands()
+    .filter(cmd => !selectedSites || selectedSites.has(cmd.site))
+    .filter(cmd => appSiteEnabled(config, cmd.site))
+    .filter(cmd => shouldRunScheduledSite(
+      cmd.site,
+      runState.perSite?.[cmd.site],
+      config,
+      now,
+      jitterMinutes,
+      options.all === true,
+    ));
+
+  const rows: AppAuthRefreshScheduledRow[] = [];
+  const refreshState: AuthRefreshState = {
+    version: AUTH_REFRESH_STATE_VERSION,
+    sites: Object.fromEntries(
+      Object.entries(runState.perSite ?? {}).flatMap(([site, entry]) => {
+        const state = appEntryToRefreshState(entry);
+        return state ? [[site, state]] : [];
+      }),
+    ),
+  };
+
+  for (const cmd of dueCommands) {
+    const [row] = await mapConcurrent([cmd], 1, item => runRefresh(item, {
+      timeoutSeconds,
+      profile: options.profile,
+      now,
+      state: refreshState,
+      force: true,
+    }));
+    const next = updateAppRunStateFromRefreshRow(runState, row, now);
+    rows.push({
+      site: row.site,
+      status: next.status ?? 'pending',
+      lastAttempt: next.lastAttempt ?? '',
+      lastTouched: next.lastTouched ?? '',
+      message: next.message ?? '',
+    });
+  }
+
+  runState.lastFullRun = formatAppTimestamp(now);
+  runState.lastFullRunSummary = scheduledSummary(rows);
+  await saveAppAuthRefreshRunState(runStatePath, runState);
+  return rows;
+}
+
 export function registerAuthCommands(program: Command): Command {
   const auth = program
     .command('auth')
@@ -511,6 +791,37 @@ export function registerAuthCommands(program: Command): Command {
         columns: ['site', 'status', 'last_touched_at', 'next_refresh_at', 'error'],
         title: 'opencli/auth refresh',
         source: opts.all ? 'forced persistent touch' : 'persistent touch with 24h throttle',
+      });
+    });
+
+  const refreshScheduled = auth
+    .command('refresh-scheduled')
+    .description('Run due App-scheduled auth refresh jobs')
+    .option('--site <sites>', 'Comma-separated site names to consider')
+    .option('--all', 'Ignore schedule/backoff and run every enabled selected site', false)
+    .option('--timeout <seconds>', 'Per-site timeout in seconds')
+    .option('--config-path <path>', 'Path to OpenCLI App auth-refresh-config.json')
+    .option('--run-state-path <path>', 'Path to OpenCLI App auth-refresh-state.json')
+    .option('--jitter-minutes <minutes>', 'Maximum stable per-site schedule jitter in minutes')
+    .option('-f, --format <fmt>', 'Output format: table, plain, json, yaml, md, csv', 'table')
+    .action(async (opts) => {
+      const globals = typeof refreshScheduled.optsWithGlobals === 'function' ? refreshScheduled.optsWithGlobals() as Record<string, unknown> : {};
+      const rows = await collectAuthRefreshScheduled({
+        sites: opts.site,
+        all: opts.all === true,
+        timeout: opts.timeout,
+        configPath: typeof opts.configPath === 'string' ? opts.configPath : undefined,
+        runStatePath: typeof opts.runStatePath === 'string' ? opts.runStatePath : undefined,
+        jitterMinutes: opts.jitterMinutes,
+        profile: typeof globals.profile === 'string' && globals.profile.trim() ? globals.profile.trim() : undefined,
+      });
+      const fmt = typeof opts.format === 'string' ? opts.format : 'table';
+      renderOutput(rows, {
+        fmt,
+        fmtExplicit: refreshScheduled.getOptionValueSource('format') === 'cli',
+        columns: ['site', 'status', 'lastAttempt', 'lastTouched', 'message'],
+        title: 'opencli/auth refresh-scheduled',
+        source: opts.all ? 'forced app scheduler' : 'app scheduler due sites',
       });
     });
 
