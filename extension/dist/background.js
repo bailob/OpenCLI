@@ -389,25 +389,33 @@ async function evaluateInFrame(tabId, expression, frameId, aggressiveRetry = fal
   });
   const contexts = tabFrameContexts.get(tabId);
   const contextId = contexts?.get(frameId);
-  if (contextId === void 0) {
-    await sendCommandInFrameTarget(tabId, frameId, "Runtime.enable", {}, aggressiveRetry).catch(() => void 0);
-    const result2 = await sendCommandInFrameTarget(tabId, frameId, "Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise: true
-    }, aggressiveRetry);
-    if (result2.exceptionDetails) {
-      const errMsg = result2.exceptionDetails.exception?.description || result2.exceptionDetails.text || "Eval error";
-      throw new Error(errMsg);
+  if (contextId !== void 0) {
+    try {
+      const result2 = await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+        expression,
+        contextId,
+        returnByValue: true,
+        awaitPromise: true
+      });
+      if (result2.exceptionDetails) {
+        const errMsg = result2.exceptionDetails.exception?.description || result2.exceptionDetails.text || "Eval error";
+        throw new Error(errMsg);
+      }
+      return result2.result?.value;
+    } catch (err) {
+      const msg = String(err?.message || err);
+      if (!/Cannot find context|context with specified id|Execution context was destroyed/i.test(msg)) {
+        throw err;
+      }
+      contexts?.delete(frameId);
     }
-    return result2.result?.value;
   }
-  const result = await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+  await sendCommandInFrameTarget(tabId, frameId, "Runtime.enable", {}, aggressiveRetry).catch(() => void 0);
+  const result = await sendCommandInFrameTarget(tabId, frameId, "Runtime.evaluate", {
     expression,
-    contextId,
     returnByValue: true,
     awaitPromise: true
-  });
+  }, aggressiveRetry);
   if (result.exceptionDetails) {
     const errMsg = result.exceptionDetails.exception?.description || result.exceptionDetails.text || "Eval error";
     throw new Error(errMsg);
@@ -527,36 +535,38 @@ function registerListeners() {
         requestHeaders: normalizeHeaders(request?.headers)
       });
       if (!entry) return;
-      entry.requestBodyKind = request?.hasPostData ? "string" : "empty";
-      {
-        const raw = String(request?.postData || "");
-        const fullSize = raw.length;
-        const truncated = fullSize > CDP_REQUEST_BODY_CAPTURE_LIMIT;
-        entry.requestBodyPreview = truncated ? raw.slice(0, CDP_REQUEST_BODY_CAPTURE_LIMIT) : raw;
-        entry.requestBodyFullSize = fullSize;
-        entry.requestBodyTruncated = truncated;
-      }
-      try {
-        const postData = await chrome.debugger.sendCommand({ tabId }, "Network.getRequestPostData", { requestId });
-        if (postData?.postData) {
-          const raw = postData.postData;
+      if (!eventParams?.redirectResponse) {
+        entry.requestBodyKind = request?.hasPostData ? "string" : "empty";
+        {
+          const raw = String(request?.postData || "");
           const fullSize = raw.length;
           const truncated = fullSize > CDP_REQUEST_BODY_CAPTURE_LIMIT;
-          entry.requestBodyKind = "string";
           entry.requestBodyPreview = truncated ? raw.slice(0, CDP_REQUEST_BODY_CAPTURE_LIMIT) : raw;
           entry.requestBodyFullSize = fullSize;
           entry.requestBodyTruncated = truncated;
         }
-      } catch {
+        try {
+          const postData = await chrome.debugger.sendCommand({ tabId }, "Network.getRequestPostData", { requestId });
+          if (postData?.postData) {
+            const raw = postData.postData;
+            const fullSize = raw.length;
+            const truncated = fullSize > CDP_REQUEST_BODY_CAPTURE_LIMIT;
+            entry.requestBodyKind = "string";
+            entry.requestBodyPreview = truncated ? raw.slice(0, CDP_REQUEST_BODY_CAPTURE_LIMIT) : raw;
+            entry.requestBodyFullSize = fullSize;
+            entry.requestBodyTruncated = truncated;
+          }
+        } catch {
+        }
       }
       return;
     }
     if (method === "Network.responseReceived") {
       const requestId = String(eventParams?.requestId || "");
       const response = eventParams?.response;
-      const entry = getOrCreateNetworkCaptureEntry(tabId, requestId, {
-        url: response?.url
-      });
+      const stateEntryIndex = state.requestToIndex.get(requestId);
+      if (stateEntryIndex === void 0) return;
+      const entry = state.entries[stateEntryIndex];
       if (!entry) return;
       entry.responseStatus = response?.status;
       entry.responseContentType = response?.mimeType || "";
@@ -785,10 +795,11 @@ const REGISTRY_KEY = "opencli_target_lease_registry_v2";
 const LEASE_IDLE_ALARM_PREFIX = "opencli:lease-idle:";
 const CONTAINER_TAB_GROUP_TITLE = {
   interactive: "OpenCLI Browser",
+  // Retained for registry/type compatibility. Adapter automation no longer
+  // creates or discovers a visible tab group.
   automation: "OpenCLI Adapter"
 };
-const LEGACY_AUTOMATION_TAB_GROUP_TITLE = "OpenCLI";
-const AUTOMATION_TAB_GROUP_COLOR = "orange";
+const OWNED_TAB_GROUP_COLOR = "orange";
 let leaseMutationQueue = Promise.resolve();
 const ownedContainers = {
   interactive: { windowId: null, groupId: null, promise: null, groupPromise: null },
@@ -894,7 +905,7 @@ function emptyRegistry() {
       },
       automation: {
         windowId: ownedContainers.automation.windowId,
-        groupId: ownedContainers.automation.groupId
+        groupId: null
       }
     },
     leases: {}
@@ -918,7 +929,7 @@ async function readRegistry() {
         },
         automation: {
           windowId: typeof storedContainers.automation?.windowId === "number" ? storedContainers.automation.windowId : null,
-          groupId: typeof storedContainers.automation?.groupId === "number" ? storedContainers.automation.groupId : null
+          groupId: null
         }
       },
       leases: stored.leases
@@ -961,7 +972,7 @@ async function persistRuntimeState() {
       },
       automation: {
         windowId: ownedContainers.automation.windowId,
-        groupId: ownedContainers.automation.groupId
+        groupId: null
       }
     },
     leases
@@ -1014,7 +1025,7 @@ function resetWindowIdleTimer(leaseKey) {
   }, timeout);
 }
 function getOwnedContainerGroupTitles(role) {
-  return role === "automation" ? [CONTAINER_TAB_GROUP_TITLE.automation, LEGACY_AUTOMATION_TAB_GROUP_TITLE] : [CONTAINER_TAB_GROUP_TITLE.interactive];
+  return role === "automation" ? [] : [CONTAINER_TAB_GROUP_TITLE.interactive];
 }
 async function focusOwnedWindowIfRequested(windowId, mode) {
   if (mode !== "foreground") return;
@@ -1047,6 +1058,7 @@ function selectOwnedContainerGroupCandidate(candidates) {
   })[0];
 }
 async function collectOwnedGroupCandidates(role) {
+  if (role === "automation") return [];
   const container = ownedContainers[role];
   const groupsById = /* @__PURE__ */ new Map();
   if (container.groupId !== null) {
@@ -1122,7 +1134,7 @@ async function ensureCanonicalGroupTitle(role, group) {
   if (group.title === canonicalTitle) return group;
   const updated = await chrome.tabGroups.update(group.id, {
     title: canonicalTitle,
-    color: AUTOMATION_TAB_GROUP_COLOR
+    color: OWNED_TAB_GROUP_COLOR
   });
   return { id: updated.id, windowId: updated.windowId, title: updated.title };
 }
@@ -1155,7 +1167,7 @@ async function createOwnedGroup(role, windowId, ids) {
   ownedContainers[role].windowId = windowId;
   await persistRuntimeState();
   const group = await chrome.tabGroups.update(groupId, {
-    color: AUTOMATION_TAB_GROUP_COLOR,
+    color: OWNED_TAB_GROUP_COLOR,
     title: CONTAINER_TAB_GROUP_TITLE[role],
     collapsed: false
   });
@@ -1163,6 +1175,7 @@ async function createOwnedGroup(role, windowId, ids) {
   return { id: group.id, windowId: group.windowId, title: group.title };
 }
 async function ensureOwnedContainerGroup(role, fallbackWindowId, tabIds) {
+  if (role === "automation") return null;
   const ids = [...new Set(tabIds.filter((id) => id !== void 0))];
   const container = ownedContainers[role];
   const previousGroupPromise = container.groupPromise ?? Promise.resolve(null);
