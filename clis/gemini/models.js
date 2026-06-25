@@ -108,18 +108,26 @@ function discoverModelsScript() {
           }
         }
 
-        // 2. Walk siblings in the same container for thinking toggles.
+        // 2. Walk children of the item itself and direct siblings at the
+        // same level for thinking toggles.  We deliberately do NOT use
+        // parent.querySelectorAll which would cross into unrelated menu items.
         const parent = item.parentElement;
         if (parent) {
-          const siblings = Array.from(parent.querySelectorAll(
+          const ownChildren = Array.from(item.querySelectorAll(
             'button, [role="button"], [role="radio"], [role="menuitemradio"], ' +
             'label, span, [role="switch"], input[type="radio"], input[type="checkbox"]'
           ));
-          for (const sibling of siblings) {
-            if (sibling === item) continue;
+          const directSiblings = Array.from(parent.children).filter(
+            (c) => c !== item && c instanceof HTMLElement &&
+              // Exclude other model entries (they carry their own model id).
+              !/\\d+\\.\\d+/.test((c.textContent || '').trim()) &&
+              !/flash|pro|lite|ultra|nano/i.test((c.textContent || '').trim())
+          );
+          const candidates = [...ownChildren, ...directSiblings];
+          for (const candidate of candidates) {
             const sibText = normalize(
-              (sibling.textContent || '') + ' ' +
-              (sibling.getAttribute('aria-label') || '')
+              (candidate.textContent || '') + ' ' +
+              (candidate.getAttribute('aria-label') || '')
             );
             for (const { value, re } of THINKING_LABEL_PATTERNS) {
               if (re.test(sibText)) {
@@ -261,6 +269,10 @@ function discoverModelsScript() {
     })()
     `;
 }
+
+export const __test__ = {
+    discoverModelsScript,
+};
 
 export const modelsCommand = cli({
     site: 'gemini',
