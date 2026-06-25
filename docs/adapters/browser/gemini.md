@@ -9,6 +9,7 @@
 | `opencli gemini new` | Start a new Gemini web chat |
 | `opencli gemini ask <prompt>` | Send a prompt and return only the assistant reply |
 | `opencli gemini image <prompt>` | Generate images in Gemini and optionally save them locally |
+| `opencli gemini models` | List available Gemini models and their supported thinking levels |
 | `opencli gemini deep-research <prompt>` | Start a Gemini Deep Research run and confirm it |
 | `opencli gemini deep-research-result <query>` | Export Deep Research report URL from a Gemini conversation |
 | `opencli gemini status` | Check Gemini web page availability and login state |
@@ -36,6 +37,12 @@ opencli gemini image "A watercolor sunset over a lake" --sd true
 
 # Save generated images to a custom directory
 opencli gemini image "A flat illustration of a robot" --op ~/tmp/gemini-images
+
+# List available models and their thinking levels
+opencli gemini models
+
+# List models as JSON for scripting
+opencli gemini models -f json
 ```
 
 ## Options
@@ -57,6 +64,18 @@ opencli gemini image "A flat illustration of a robot" --op ~/tmp/gemini-images
 | `--st` | Optional style shorthand, e.g. `icon`, `anime`, `watercolor` |
 | `--op` | Output directory for downloaded images (default: `~/tmp/gemini-images`) |
 | `--sd` | Skip download and only print the Gemini page link |
+
+### `models`
+
+| Column | Description |
+|--------|-------------|
+| `model` | Canonical model ID (e.g. `2.5-flash`, `2.5-pro`, `2.5-flash-lite`) |
+| `thinkingValues` | Supported thinking levels for the model (e.g. `["standard", "extended"]` or `[]`) |
+
+- `models` discovers available models and their thinking levels from the visible Gemini web UI model picker.
+- The command is read-only: it does not select a model, change a thinking level, start a new chat, or submit a prompt.
+- Model IDs match the canonical format used by later `gemini ask` model selection.
+- Returns an empty list when the model picker cannot be found or no model entries are available.
 
 ## Behavior
 
