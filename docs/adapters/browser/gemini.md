@@ -38,6 +38,12 @@ opencli gemini ask "Explain quantum computing" --thinking extended
 # Ask with standard thinking in a fresh chat
 opencli gemini ask "Hello" --new true --thinking standard
 
+# Ask with a specific model and thinking level combined
+opencli gemini ask "Explain quantum computing in one sentence" --model 2.5-pro --thinking extended
+
+# Ask in a new chat with a specific model and thinking level
+opencli gemini ask "Summarize this design in 3 bullets" --new true --model 2.5-flash --thinking standard
+
 # Generate an icon image with short flags
 opencli gemini image "Generate a tiny cyan moon icon" --rt 1:1 --st icon
 
@@ -90,6 +96,7 @@ opencli gemini models -f json
 
 ## Behavior
 
+- When `--new true` is combined with `--model` and/or `--thinking`, the new chat is created first, then the model and thinking level are selected, then the snapshot is read, and finally the prompt is submitted.
 - `ask --model <value>` selects the requested model before reading the page state and sending the prompt. The selected model remains visible in the Gemini web UI after the command completes. Short aliases like `pro` or `flash` are rejected—use canonical model IDs from `opencli gemini models`.
 - When `--model` is omitted, `ask` does not change the current model.
 - All other Gemini commands (`image`, `deep-research`, etc.) are unaffected and do not accept `--model`.

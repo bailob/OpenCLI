@@ -522,12 +522,12 @@ describe('gemini ask orchestration', () => {
 
     // ── Model selection + --new interaction ──────────────────────────────
 
-    it('selects model, then starts new chat when both --model and --new=true', async () => {
+    it('starts new chat, then selects model when both --model and --new=true', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        mocks.startNewGeminiChat.mockResolvedValueOnce('clicked');
         vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
-        mocks.startNewGeminiChat.mockResolvedValueOnce('clicked');
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
         mocks.waitForGeminiSubmission.mockResolvedValueOnce(submission);
@@ -535,10 +535,10 @@ describe('gemini ask orchestration', () => {
 
         await askCommand.func(page, { prompt: 'hello', model: '2.5-flash', timeout: 10, new: 'true' });
 
-        // Model selection happens first, then new chat.
-        const selectCallOrder = mocks.selectGeminiModel.mock.invocationCallOrder[0];
+        // New chat happens first, then model selection.
         const newChatCallOrder = mocks.startNewGeminiChat.mock.invocationCallOrder[0];
-        expect(selectCallOrder).toBeLessThan(newChatCallOrder);
+        const selectCallOrder = mocks.selectGeminiModel.mock.invocationCallOrder[0];
+        expect(newChatCallOrder).toBeLessThan(selectCallOrder);
     });
 });
 
@@ -893,14 +893,9 @@ describe('gemini ask thinking selection', () => {
             .mockReturnValueOnce(2000);
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        // First evaluate: model discovery (model selection block)
+        // Single discovery call shared by model and thinking selection.
         page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
-        // Second evaluate: thinking discovery
-        page.evaluate.mockResolvedValueOnce([
-            { model: '2.5-flash', thinkingValues: ['standard'] },
-            { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
-        ]);
         // getCurrentGeminiModel should NOT be called because --model overrides it
         mocks.getCurrentGeminiModel.mockResolvedValue('2.5-flash');
         setupHappyPath();
@@ -920,14 +915,12 @@ describe('gemini ask thinking selection', () => {
     it('rejects thinking not available for the selected model (--model + --thinking mismatch)', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        // First evaluate: model discovery for selection
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
-        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
-        // Second evaluate: thinking discovery — only standard available for 2.5-flash
+        // Single discovery call: 2.5-flash only supports standard, not extended.
         page.evaluate.mockResolvedValueOnce([
             { model: '2.5-flash', thinkingValues: ['standard'] },
             { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
         ]);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
 
         let err;
         try {
@@ -949,10 +942,7 @@ describe('gemini ask thinking selection', () => {
     it('unwraps Browser Bridge envelope for thinking discovery before scoped validation', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        // First evaluate: model discovery for selection
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
-        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
-        // Second evaluate: thinking discovery arrives wrapped by Browser Bridge.
+        // Single discovery call wrapped by Browser Bridge: 2.5-flash only supports standard.
         page.evaluate.mockResolvedValueOnce({
             session: 'site:gemini',
             data: [
@@ -960,6 +950,7 @@ describe('gemini ask thinking selection', () => {
                 { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
             ],
         });
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
 
         let err;
         try {
@@ -1013,5 +1004,168 @@ describe('gemini ask thinking selection', () => {
         // First check should catch it; neither discovery nor current-model lookup runs.
         expect(page.evaluate).not.toHaveBeenCalled();
         expect(mocks.getCurrentGeminiModel).not.toHaveBeenCalled();
+    });
+
+    // ── Combined --model + --thinking + --new true ordering ─────────
+
+    it('discovers models once when both --model and --thinking are supplied', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        setupHappyPath();
+
+        await askCommand.func(page, {
+            prompt: 'test', timeout: 20, new: 'false',
+            model: '2.5-flash', thinking: 'standard',
+        });
+
+        // page.evaluate (discovery) is called exactly once, shared by both blocks.
+        expect(page.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it('applies model and thinking before snapshot when both flags are supplied (no --new)', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        setupHappyPath();
+
+        await askCommand.func(page, {
+            prompt: 'test', timeout: 20, new: 'false',
+            model: '2.5-flash', thinking: 'standard',
+        });
+
+        // Model selection before thinking selection.
+        const modelCall = mocks.selectGeminiModel.mock.invocationCallOrder[0];
+        const thinkingCall = mocks.selectGeminiThinking.mock.invocationCallOrder[0];
+        expect(modelCall).toBeLessThan(thinkingCall);
+
+        // Thinking selection before snapshot.
+        const snapshotCall = mocks.readGeminiSnapshot.mock.invocationCallOrder[0];
+        expect(thinkingCall).toBeLessThan(snapshotCall);
+    });
+
+    it('applies --new true, model, and thinking in correct order', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        mocks.startNewGeminiChat.mockResolvedValueOnce('clicked');
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        setupHappyPath();
+
+        await askCommand.func(page, {
+            prompt: 'test', timeout: 20,
+            new: 'true', model: '2.5-flash', thinking: 'standard',
+        });
+
+        // Order: new chat → model selection → thinking selection → snapshot.
+        const newCall = mocks.startNewGeminiChat.mock.invocationCallOrder[0];
+        const modelCall = mocks.selectGeminiModel.mock.invocationCallOrder[0];
+        const thinkingCall = mocks.selectGeminiThinking.mock.invocationCallOrder[0];
+        const snapshotCall = mocks.readGeminiSnapshot.mock.invocationCallOrder[0];
+        expect(newCall).toBeLessThan(modelCall);
+        expect(modelCall).toBeLessThan(thinkingCall);
+        expect(thinkingCall).toBeLessThan(snapshotCall);
+    });
+
+    it('stops before snapshot and send when combined validation fails (invalid model)', async () => {
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20,
+                model: '99.9-nonexistent', thinking: 'standard',
+            });
+        } catch (e) { err = e; }
+
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain('Unknown model');
+        // Must not proceed to snapshot, thinking selection, or send.
+        expect(mocks.selectGeminiModel).not.toHaveBeenCalled();
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+        expect(mocks.sendGeminiMessage).not.toHaveBeenCalled();
+    });
+
+    it('stops before snapshot and send when combined validation fails (thinking unavailable)', async () => {
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        // Single discovery: 2.5-flash-lite has no thinking values.
+        page.evaluate.mockResolvedValueOnce([
+            { model: '2.5-flash-lite', thinkingValues: [] },
+            { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
+        ]);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20,
+                model: '2.5-flash-lite', thinking: 'standard',
+            });
+        } catch (e) { err = e; }
+
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain('not available for the selected model');
+        // Must not proceed to snapshot or send.
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+        expect(mocks.sendGeminiMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not change response extraction when model and thinking are selected', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: '请只回复：OK', timeout: 20, new: 'false',
+            model: '2.5-flash', thinking: 'standard',
+        });
+
+        // Response extraction is unchanged: same prefix, same wait logic.
+        expect(mocks.readGeminiSnapshot).toHaveBeenCalledWith(page);
+        expect(mocks.waitForGeminiSubmission).toHaveBeenCalledWith(page, baseline, 20);
+        expect(mocks.waitForGeminiResponse).toHaveBeenCalledWith(page, submission, '请只回复：OK', 18);
+        expect(result).toEqual([{ response: '💬 OK' }]);
+    });
+
+    it('does not restore model or thinking after completion (combined flags)', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        setupHappyPath();
+
+        await askCommand.func(page, {
+            prompt: 'test', timeout: 20, new: 'false',
+            model: '2.5-flash', thinking: 'standard',
+        });
+
+        // Both selectGeminiModel and selectGeminiThinking are called exactly once
+        // (for selection, not for restoration).
+        expect(mocks.selectGeminiModel).toHaveBeenCalledTimes(1);
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledTimes(1);
     });
 });

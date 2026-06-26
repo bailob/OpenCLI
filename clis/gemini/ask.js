@@ -88,14 +88,46 @@ export const askCommand = cli({
             throw new ArgumentError('--timeout must be a positive integer (seconds)');
         }
 
-        // ── Model selection ──────────────────────────────────────────────
-        if (kwargs.model !== undefined && kwargs.model !== null) {
-            const modelValue = String(kwargs.model).trim();
+        // ── New chat (must happen before model/thinking selection) ──────
+        const startFresh = normalizeBooleanFlag(kwargs.new);
+        if (startFresh)
+            await startNewGeminiChat(page);
+
+        // ── Early validation: model format & thinking value ────────────
+        const hasModel = kwargs.model !== undefined && kwargs.model !== null;
+        const hasThinking = kwargs.thinking != null;
+
+        let modelValue = null;
+        if (hasModel) {
+            modelValue = String(kwargs.model).trim();
             validateAskModelValue(modelValue);
+        }
+
+        if (hasThinking) {
+            const thinkingRaw = String(kwargs.thinking ?? '').trim();
+            const thinkingValue = thinkingRaw.toLowerCase();
+            if (thinkingValue !== 'standard' && thinkingValue !== 'extended') {
+                throw new ArgumentError(
+                    `--thinking must be 'standard' or 'extended', got '${thinkingRaw}'`,
+                    'Run `opencli gemini models` to see available thinking levels.',
+                );
+            }
+        }
+
+        // ── Model and thinking discovery (single discovery call shared by
+        //    both model selection and thinking selection) ─────────────────
+        let discoveredModels = null;
+        if (hasModel || hasThinking) {
             await ensureGeminiPage(page);
             const raw = await page.evaluate(discoverModelsScript());
-            const availableModels = unwrapBrowserBridgeEnvelope(raw) || [];
-            if (!Array.isArray(availableModels)) {
+            const unwrapped = unwrapBrowserBridgeEnvelope(raw);
+            discoveredModels = Array.isArray(unwrapped) ? unwrapped : [];
+        }
+
+        // ── Model selection ──────────────────────────────────────────────
+        if (hasModel) {
+            const availableModels = discoveredModels || [];
+            if (!Array.isArray(availableModels) || availableModels.length === 0) {
                 throw new ArgumentError(
                     'Failed to discover Gemini models. Use "opencli gemini models" to see available values.'
                 );
@@ -111,32 +143,16 @@ export const askCommand = cli({
             await selectGeminiModel(page, modelValue);
         }
 
-        const startFresh = normalizeBooleanFlag(kwargs.new);
-        if (startFresh)
-            await startNewGeminiChat(page);
-
         // ── Thinking validation and selection ──────────────────────────
-        if (kwargs.thinking != null) {
-            const thinkingRaw = String(kwargs.thinking ?? '').trim();
-            const thinkingValue = thinkingRaw.toLowerCase();
-
-            if (thinkingValue !== 'standard' && thinkingValue !== 'extended') {
-                throw new ArgumentError(
-                    `--thinking must be 'standard' or 'extended', got '${thinkingRaw}'`,
-                    'Run `opencli gemini models` to see available thinking levels.',
-                );
-            }
-
-            // Discover all models and find the target model.
-            const discoveredRaw = await page.evaluate(discoverModelsScript());
-            const unwrappedDiscovered = unwrapBrowserBridgeEnvelope(discoveredRaw);
-            const discovered = Array.isArray(unwrappedDiscovered) ? unwrappedDiscovered : [];
+        if (hasThinking) {
+            // Reuse the pre-discovered models from the shared discovery call.
+            const discovered = discoveredModels || [];
 
             // When --model was supplied, scope thinking to the selected model;
             // otherwise scope to the current model from the web UI.
             let targetModelId;
-            if (kwargs.model !== undefined && kwargs.model !== null) {
-                targetModelId = String(kwargs.model).trim();
+            if (hasModel) {
+                targetModelId = modelValue;
             } else {
                 targetModelId = await getCurrentGeminiModel(page);
             }
@@ -152,6 +168,9 @@ export const askCommand = cli({
                 }
             }
 
+            // Resolve thinkingValue from early validation.
+            const thinkingValue = String(kwargs.thinking ?? '').trim().toLowerCase();
+
             // Validate: if we can identify the target model, scope to its
             // thinking values; otherwise fall back to the union across all models.
             const targetModelThinking =
@@ -164,7 +183,7 @@ export const askCommand = cli({
                 if (!targetModelThinking.includes(thinkingValue)) {
                     const availableForModel = targetModelThinking.sort().join(', ');
                     throw new ArgumentError(
-                        `--thinking '${thinkingValue}' is not available for the ${kwargs.model !== undefined && kwargs.model !== null ? 'selected' : 'current'} model ('${targetModelId}')`,
+                        `--thinking '${thinkingValue}' is not available for the ${hasModel ? 'selected' : 'current'} model ('${targetModelId}')`,
                         `Model '${targetModelId}' supports: ${availableForModel}. Run \`opencli gemini models\` for all models.`,
                     );
                 }
