@@ -1867,24 +1867,59 @@ function openModelPickerForThinkingScript() {
       const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
       const VERSION_LABEL_RE = /\\d+\\.\\d+/;
 
+      const MODE_SELECTOR_PATTERNS = [
+        /模式选择器/i,
+        /mode[\\s-]*selector/i,
+        /model[\\s-]*selector/i,
+        /model[\\s-]*picker/i,
+        /选择模型/i,
+        /select[\\s-]+model/i,
+        /choose[\\s-]+model/i,
+        /switch[\\s-]+model/i,
+        /change[\\s-]+model/i,
+      ];
+
+      const MODEL_VARIANT_RE = /^(?:gemini\\s+)?(flash|lite|pro|ultra|nano|flash-lite|flash[\\s-]*thinking)$/i;
+
       const findModelPicker = () => {
         const buttons = Array.from(
           document.querySelectorAll('button, [role="button"]')
         ).filter(isVisible);
 
-        const candidates = buttons.filter((b) => {
+        // Method 1: Detect model/mode selector via aria-label patterns.
+        for (const button of buttons) {
+          const aria = normalize(button.getAttribute('aria-label') || '');
+          for (const pattern of MODE_SELECTOR_PATTERNS) {
+            if (pattern.test(aria)) return button;
+          }
+        }
+
+        // Method 2: Detect buttons whose text contains a model-version pattern.
+        const versionCandidates = buttons.filter((b) => {
           const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
           return VERSION_LABEL_RE.test(text) && text.length < 80;
         });
-
-        candidates.sort((a, b) => {
+        versionCandidates.sort((a, b) => {
           const aRect = a.getBoundingClientRect();
           const bRect = b.getBoundingClientRect();
           return aRect.top - bRect.top || aRect.left - bRect.left;
         });
+        if (versionCandidates.length > 0) return versionCandidates[0];
 
-        if (candidates.length > 0) return candidates[0];
+        // Method 3: Detect buttons showing a known model variant as their
+        // sole text (e.g. "Pro", "Flash", "Flash-Lite").
+        const variantCandidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '');
+          return MODEL_VARIANT_RE.test(text) && text.length < 30;
+        });
+        variantCandidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        if (variantCandidates.length > 0) return variantCandidates[0];
 
+        // Method 4: Fallback — look for any element with model-related attributes.
         const attrEls = Array.from(
           document.querySelectorAll('[data-model-selector], [aria-label*="model" i], [aria-label*="模式" i]')
         ).filter(isVisible);
@@ -2159,26 +2194,61 @@ function getCurrentGeminiModelScript() {
 
       const VERSION_LABEL_RE = /\\d+\\.\\d+/;
 
+      const MODE_SELECTOR_PATTERNS = [
+        /模式选择器/i,
+        /mode[\\s-]*selector/i,
+        /model[\\s-]*selector/i,
+        /model[\\s-]*picker/i,
+        /选择模型/i,
+        /select[\\s-]+model/i,
+        /choose[\\s-]+model/i,
+        /switch[\\s-]+model/i,
+        /change[\\s-]+model/i,
+      ];
+
+      const MODEL_VARIANT_RE = /^(?:gemini\\s+)?(flash|lite|pro|ultra|nano|flash-lite|flash[\\s-]*thinking)$/i;
+
       const findModelPicker = () => {
         const buttons = Array.from(
           document.querySelectorAll('button, [role="button"]')
         ).filter(isVisible);
 
-        const candidates = buttons.filter((b) => {
+        // Method 1: Detect model/mode selector via aria-label patterns.
+        for (const button of buttons) {
+          const aria = normalize(button.getAttribute('aria-label') || '');
+          for (const pattern of MODE_SELECTOR_PATTERNS) {
+            if (pattern.test(aria)) return button;
+          }
+        }
+
+        // Method 2: Detect buttons whose text contains a model-version pattern.
+        const versionCandidates = buttons.filter((b) => {
           const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
           return VERSION_LABEL_RE.test(text) && text.length < 80;
         });
-
-        candidates.sort((a, b) => {
+        versionCandidates.sort((a, b) => {
           const aRect = a.getBoundingClientRect();
           const bRect = b.getBoundingClientRect();
           return aRect.top - bRect.top || aRect.left - bRect.left;
         });
+        if (versionCandidates.length > 0) return versionCandidates[0];
 
-        if (candidates.length > 0) return candidates[0];
+        // Method 3: Detect buttons showing a known model variant as their
+        // sole text (e.g. "Pro", "Flash", "Flash-Lite").
+        const variantCandidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '');
+          return MODEL_VARIANT_RE.test(text) && text.length < 30;
+        });
+        variantCandidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        if (variantCandidates.length > 0) return variantCandidates[0];
 
+        // Method 4: Fallback — look for any element with model-related attributes.
         const attrEls = Array.from(
-          document.querySelectorAll('[data-model-selector], [aria-label*="model" i]')
+          document.querySelectorAll('[data-model-selector], [aria-label*="model" i], [aria-label*="模式" i]')
         ).filter(isVisible);
         if (attrEls.length > 0) return attrEls[0];
 
@@ -2247,6 +2317,7 @@ export const __test__ = {
     openModelPickerForThinkingScript,
     clickThinkingToggleInMenuScript,
     selectThinkingInMenuScript,
+    selectGeminiModelScript,
     getCurrentGeminiModelScript,
 };
 export async function getGeminiVisibleImageUrls(page) {
@@ -2501,22 +2572,68 @@ export function selectGeminiModelScript(modelId) {
         return '';
       };
 
-      // ── Find model picker button ──
+      // ── Find model picker button (full 4-method strategy from models.js) ──
       const VERSION_LABEL_RE = /\\d+\\.\\d+/;
+
+      const MODE_SELECTOR_PATTERNS = [
+        /模式选择器/i,
+        /mode[\\s-]*selector/i,
+        /model[\\s-]*selector/i,
+        /model[\\s-]*picker/i,
+        /选择模型/i,
+        /select[\\s-]+model/i,
+        /choose[\\s-]+model/i,
+        /switch[\\s-]+model/i,
+        /change[\\s-]+model/i,
+      ];
+
+      const MODEL_VARIANT_RE = /^(?:gemini\\s+)?(flash|lite|pro|ultra|nano|flash-lite|flash[\\s-]*thinking)$/i;
+
       const findModelPicker = () => {
         const buttons = Array.from(
           document.querySelectorAll('button, [role="button"]')
         ).filter(isVisible);
-        const candidates = buttons.filter((b) => {
+
+        // Method 1: Detect model/mode selector via aria-label patterns.
+        for (const button of buttons) {
+          const aria = normalize(button.getAttribute('aria-label') || '');
+          for (const pattern of MODE_SELECTOR_PATTERNS) {
+            if (pattern.test(aria)) return button;
+          }
+        }
+
+        // Method 2: Detect buttons whose text contains a model-version pattern.
+        const versionCandidates = buttons.filter((b) => {
           const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
           return VERSION_LABEL_RE.test(text) && text.length < 80;
         });
-        candidates.sort((a, b) => {
+        versionCandidates.sort((a, b) => {
           const aRect = a.getBoundingClientRect();
           const bRect = b.getBoundingClientRect();
           return aRect.top - bRect.top || aRect.left - bRect.left;
         });
-        return candidates.length > 0 ? candidates[0] : null;
+        if (versionCandidates.length > 0) return versionCandidates[0];
+
+        // Method 3: Detect buttons showing a known model variant as their
+        // sole text (e.g. "Pro", "Flash", "Flash-Lite").
+        const variantCandidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '');
+          return MODEL_VARIANT_RE.test(text) && text.length < 30;
+        });
+        variantCandidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        if (variantCandidates.length > 0) return variantCandidates[0];
+
+        // Method 4: Fallback — look for any element with model-related attributes.
+        const attrEls = Array.from(
+          document.querySelectorAll('[data-model-selector], [aria-label*="model" i], [aria-label*="模式" i]')
+        ).filter(isVisible);
+        if (attrEls.length > 0) return attrEls[0];
+
+        return null;
       };
 
       const picker = findModelPicker();
