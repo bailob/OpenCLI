@@ -17,7 +17,7 @@ import { GEMINI_DOMAIN, ensureGeminiPage } from './utils.js';
  * The script is intentionally read-only: it never selects a model, changes a
  * thinking level, starts a new chat, or submits a prompt.
  */
-function discoverModelsScript() {
+export function discoverModelsScript() {
     return `
     (() => {
       const isVisible = (el) => {
