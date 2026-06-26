@@ -1976,6 +1976,109 @@ export async function selectGeminiThinking(page, thinkingValue) {
     return '';
 }
 
+// ── Current model detection ─────────────────────────────────────────
+
+/**
+ * Browser evaluate script that reads the currently selected model from the
+ * Gemini model-picker button and returns its canonical model ID.
+ *
+ * Uses the same canonicalModelId logic as discoverModelsScript so that
+ * the returned ID can be matched against discovered model entries.
+ *
+ * @returns a function string for page.evaluate()
+ */
+function getCurrentGeminiModelScript() {
+    return `
+    (() => {
+      const isVisible = (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.hidden || el.closest('[hidden]')) return false;
+        const ariaHidden = el.getAttribute('aria-hidden');
+        if (ariaHidden && ariaHidden.toLowerCase() === 'true') return false;
+        if (el.closest('[aria-hidden="true"]')) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (Number(style.opacity) === 0 || style.pointerEvents === 'none') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+
+      const VERSION_LABEL_RE = /\\d+\\.\\d+/;
+
+      const findModelPicker = () => {
+        const buttons = Array.from(
+          document.querySelectorAll('button, [role="button"]')
+        ).filter(isVisible);
+
+        const candidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
+          return VERSION_LABEL_RE.test(text) && text.length < 80;
+        });
+
+        candidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+
+        if (candidates.length > 0) return candidates[0];
+
+        const attrEls = Array.from(
+          document.querySelectorAll('[data-model-selector], [aria-label*="model" i]')
+        ).filter(isVisible);
+        if (attrEls.length > 0) return attrEls[0];
+
+        return null;
+      };
+
+      const canonicalModelId = (raw) => {
+        const text = normalize(raw);
+        if (!text) return '';
+        const cleaned = text.replace(/^[^a-z0-9]+/i, '').trim();
+        const versionRe = /^((?:gemini[\\s-]*)?(\\d+(?:\\.\\d+)?)(?:[\\s-]+(flash|pro|lite|ultra|nano|thinking|experimental))(?:[\\s-]*(flash|pro|lite|ultra|nano|thinking|experimental))?)/i;
+        const match = cleaned.match(versionRe);
+        if (match) {
+          const version = match[2];
+          let variant = (match[3] || '').toLowerCase();
+          const extra = (match[4] || '').toLowerCase();
+          if (extra) variant = variant + '-' + extra;
+          return version + '-' + variant;
+        }
+        const fallbackRe = /(\\d+(?:\\.\\d+)?)\\s*(flash|pro|lite|ultra|nano|thinking|experimental)/i;
+        const fallbackMatch = cleaned.match(fallbackRe);
+        if (fallbackMatch) {
+          return fallbackMatch[1] + '-' + fallbackMatch[2].toLowerCase();
+        }
+        if (/\\d+(?:\\.\\d+)?/.test(cleaned) && cleaned.length < 60) {
+          return cleaned.replace(/\\s+/g, '-').replace(/[^a-z0-9.-]/g, '');
+        }
+        return '';
+      };
+
+      const picker = findModelPicker();
+      if (!picker) return '';
+
+      const combined = normalize(picker.textContent || '') + ' ' + normalize(picker.getAttribute('aria-label') || '');
+      return canonicalModelId(combined);
+    })()
+    `;
+}
+
+/**
+ * Get the canonical ID of the currently selected Gemini model from the
+ * model-picker button in the web UI.
+ *
+ * @param {object} page - Puppeteer page object
+ * @returns {Promise<string>} canonical model ID, or empty string on failure
+ */
+export async function getCurrentGeminiModel(page) {
+    await ensureGeminiPage(page);
+    const modelId = await page.evaluate(getCurrentGeminiModelScript()).catch(() => '');
+    return typeof modelId === 'string' ? modelId : '';
+}
+
 export const __test__ = {
     GEMINI_COMPOSER_SELECTORS,
     GEMINI_COMPOSER_MARKER_ATTR,
@@ -1990,6 +2093,7 @@ export const __test__ = {
     submitComposerScript,
     insertComposerTextFallbackScript,
     selectGeminiThinkingScript,
+    getCurrentGeminiModelScript,
 };
 export async function getGeminiVisibleImageUrls(page) {
     await ensureGeminiPage(page);

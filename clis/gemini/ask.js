@@ -3,6 +3,7 @@ import { ArgumentError } from '@jackwener/opencli/errors';
 import {
   GEMINI_DOMAIN,
   ensureGeminiPage,
+  getCurrentGeminiModel,
   readGeminiSnapshot,
   selectGeminiModel,
   selectGeminiThinking,
@@ -121,20 +122,49 @@ export const askCommand = cli({
                 );
             }
 
-            // Validate against discovered thinking values.
+            // Discover all models and find the target model.
             const discoveredRaw = await page.evaluate(discoverModelsScript());
             const discovered = Array.isArray(discoveredRaw) ? discoveredRaw : [];
-            const availableThinking = new Set();
+
+            // When --model was supplied, scope thinking to the selected model;
+            // otherwise scope to the current model from the web UI.
+            let targetModelId;
+            if (kwargs.model !== undefined && kwargs.model !== null) {
+                targetModelId = String(kwargs.model).trim();
+            } else {
+                targetModelId = await getCurrentGeminiModel(page);
+            }
+
+            // Build a map of model → thinkingValues for lookup.
+            const modelThinkingMap = new Map();
+            const allThinking = new Set();
             for (const entry of discovered) {
-                if (entry && Array.isArray(entry.thinkingValues)) {
-                    for (const tv of entry.thinkingValues) {
-                        if (typeof tv === 'string') availableThinking.add(tv);
-                    }
+                if (entry && typeof entry.model === 'string' && Array.isArray(entry.thinkingValues)) {
+                    const tvs = entry.thinkingValues.filter((tv) => typeof tv === 'string');
+                    modelThinkingMap.set(entry.model, tvs);
+                    for (const tv of tvs) allThinking.add(tv);
                 }
             }
 
-            if (availableThinking.size > 0 && !availableThinking.has(thinkingValue)) {
-                const availableList = [...availableThinking].sort().join(', ');
+            // Validate: if we can identify the target model, scope to its
+            // thinking values; otherwise fall back to the union across all models.
+            const targetModelThinking =
+                targetModelId && modelThinkingMap.has(targetModelId)
+                    ? modelThinkingMap.get(targetModelId)
+                    : null;
+
+            if (targetModelThinking) {
+                // Scoped to the target model.
+                if (!targetModelThinking.includes(thinkingValue)) {
+                    const availableForModel = targetModelThinking.sort().join(', ');
+                    throw new ArgumentError(
+                        `--thinking '${thinkingValue}' is not available for the ${kwargs.model !== undefined && kwargs.model !== null ? 'selected' : 'current'} model ('${targetModelId}')`,
+                        `Model '${targetModelId}' supports: ${availableForModel}. Run \`opencli gemini models\` for all models.`,
+                    );
+                }
+            } else if (allThinking.size > 0 && !allThinking.has(thinkingValue)) {
+                // Union fallback when the target model cannot be identified.
+                const availableList = [...allThinking].sort().join(', ');
                 throw new ArgumentError(
                     `--thinking '${thinkingValue}' is not currently available`,
                     `Available thinking values: ${availableList}. Run \`opencli gemini models\` for details.`,
@@ -142,7 +172,21 @@ export const askCommand = cli({
             }
 
             // Select the requested thinking level before snapshot.
-            await selectGeminiThinking(page, thinkingValue);
+            const selected = await selectGeminiThinking(page, thinkingValue);
+            if (!selected) {
+                // Build an informative hint from what we know.
+                const hintParts = [];
+                if (targetModelThinking && targetModelThinking.length > 0) {
+                    hintParts.push(`Model '${targetModelId}' supports: ${targetModelThinking.sort().join(', ')}.`);
+                } else if (allThinking.size > 0) {
+                    hintParts.push(`Available thinking values: ${[...allThinking].sort().join(', ')}.`);
+                }
+                hintParts.push('Run `opencli gemini models` for details.');
+                throw new ArgumentError(
+                    `Could not select thinking level '${thinkingValue}' in the Gemini web UI`,
+                    hintParts.join(' '),
+                );
+            }
         }
 
         const before = await readGeminiSnapshot(page);
