@@ -59,14 +59,23 @@ vi.mock('./utils.js', async () => {
     };
 });
 
-// Mock models.js — stub discoverModelsScript to return a marker string.
+// Mock models.js — stub the split discovery script functions.
 const modelsMock = vi.hoisted(() => ({
-    discoverModelsScript: vi.fn().mockReturnValue('__DISCOVER_SCRIPT__'),
+    pickModelPickerScript: vi.fn().mockReturnValue('__PICKER_SCRIPT__'),
+    readMenuModelsScript: vi.fn().mockReturnValue('__READ_MODELS_SCRIPT__'),
+    clickThinkingToggleScript: vi.fn().mockReturnValue('__TOGGLE_SCRIPT__'),
+    extractThinkingScript: vi.fn().mockReturnValue('__EXTRACT_THINKING_SCRIPT__'),
 }));
 vi.mock('./models.js', () => ({
-    discoverModelsScript: modelsMock.discoverModelsScript,
+    pickModelPickerScript: modelsMock.pickModelPickerScript,
+    readMenuModelsScript: modelsMock.readMenuModelsScript,
+    clickThinkingToggleScript: modelsMock.clickThinkingToggleScript,
+    extractThinkingScript: modelsMock.extractThinkingScript,
     __test__: {
-        discoverModelsScript: modelsMock.discoverModelsScript,
+        pickModelPickerScript: modelsMock.pickModelPickerScript,
+        readMenuModelsScript: modelsMock.readMenuModelsScript,
+        clickThinkingToggleScript: modelsMock.clickThinkingToggleScript,
+        extractThinkingScript: modelsMock.extractThinkingScript,
     },
 }));
 
@@ -99,6 +108,47 @@ function createPageMock() {
         nativeType: vi.fn().mockResolvedValue(undefined),
         nativeKeyPress: vi.fn().mockResolvedValue(undefined),
     };
+}
+
+/**
+ * Set up page.evaluate mocks for the multi-step discovery flow used by ask.
+ *
+ * The ask command now opens the picker (evaluate → { ok }), waits, reads
+ * models (evaluate → models[]), optionally clicks the thinking toggle
+ * (evaluate → bool) + extracts thinking values (evaluate → string[]), then
+ * closes the menu (evaluate → anything).
+ */
+function setupDiscoveryMocks(page, models = FIXTURE_MODELS, thinkingValues = ['standard', 'extended']) {
+    vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true }); // picker click
+    vi.mocked(page.evaluate).mockResolvedValueOnce(models);       // read models
+    vi.mocked(page.evaluate).mockResolvedValueOnce(true);          // thinking toggle
+    vi.mocked(page.evaluate).mockResolvedValueOnce(thinkingValues); // thinking values
+    vi.mocked(page.evaluate).mockResolvedValueOnce(undefined);     // close menu
+}
+
+function setupDiscoveryWithoutThinking(page, models = FIXTURE_MODELS) {
+    vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
+    vi.mocked(page.evaluate).mockResolvedValueOnce(models);
+    vi.mocked(page.evaluate).mockResolvedValueOnce(false); // toggle not found
+    vi.mocked(page.evaluate).mockResolvedValueOnce(undefined);
+}
+
+function setupFailedDiscovery(page, reason = 'Model picker button not found') {
+    vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: false, reason });
+}
+
+function setupDiscoveryNonArray(page) {
+    vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
+    vi.mocked(page.evaluate).mockResolvedValueOnce({ not: 'an array' });
+    vi.mocked(page.evaluate).mockResolvedValueOnce(false);
+    vi.mocked(page.evaluate).mockResolvedValueOnce(undefined);
+}
+
+function setupDiscoveryEmpty(page) {
+    vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
+    vi.mocked(page.evaluate).mockResolvedValueOnce([]);
+    vi.mocked(page.evaluate).mockResolvedValueOnce(false);
+    vi.mocked(page.evaluate).mockResolvedValueOnce(undefined);
 }
 
 // ── Command registration ─────────────────────────────────────────────────
@@ -194,7 +244,13 @@ describe('validateAskModelValue', () => {
  *   2. getCurrentGeminiModel (mocked separately)
  */
 function setupDiscoveryAndModel(page, discoveredModels, currentModel) {
-    page.evaluate.mockResolvedValueOnce(discoveredModels);
+    // Multi-step discovery: picker click → read models → thinking toggle skipped → close
+    // Thinking toggle returns false so per-model thinkingValues from the test data
+    // are preserved (not overwritten by a global extraction).
+    vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
+    vi.mocked(page.evaluate).mockResolvedValueOnce(discoveredModels);
+    vi.mocked(page.evaluate).mockResolvedValueOnce(false); // toggle not found
+    vi.mocked(page.evaluate).mockResolvedValueOnce(undefined); // close
     mocks.getCurrentGeminiModel.mockResolvedValueOnce(currentModel);
 }
 
@@ -290,7 +346,7 @@ describe('gemini ask orchestration', () => {
     it('selects the model before readGeminiSnapshot when --model is provided', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS); // discoverModelsScript
+        setupDiscoveryWithoutThinking(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
@@ -302,7 +358,7 @@ describe('gemini ask orchestration', () => {
         // Model discovery and selection happen first.
         expect(mocks.ensureGeminiPage).toHaveBeenCalledWith(page);
         expect(mocks.ensureGeminiPage).toHaveBeenCalledBefore(page.evaluate);
-        expect(page.evaluate).toHaveBeenCalledTimes(1); // discoverModelsScript
+        expect(page.evaluate).toHaveBeenCalledTimes(4); // picker click, read models, toggle, close
         expect(mocks.selectGeminiModel).toHaveBeenCalledWith(page, '2.5-flash');
 
         // Model selection happens before readGeminiSnapshot.
@@ -317,7 +373,7 @@ describe('gemini ask orchestration', () => {
     it('selects the model before sending the prompt', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryWithoutThinking(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
@@ -334,7 +390,7 @@ describe('gemini ask orchestration', () => {
     it('selects 2.5-pro model successfully', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryWithoutThinking(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
@@ -350,7 +406,7 @@ describe('gemini ask orchestration', () => {
     it('selects 2.5-flash-lite model successfully', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryWithoutThinking(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
@@ -416,14 +472,14 @@ describe('gemini ask orchestration', () => {
     it('throws ArgumentError for a model id not in the discovered list', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryWithoutThinking(page);
 
         await expect(
             askCommand.func(page, { prompt: 'hello', model: '99.9-nonexistent', timeout: 10, new: 'false' })
         ).rejects.toBeInstanceOf(ArgumentError);
 
         // Discovery was attempted.
-        expect(page.evaluate).toHaveBeenCalledTimes(1);
+        expect(page.evaluate).toHaveBeenCalledTimes(4);
         // But model was not selected.
         expect(mocks.selectGeminiModel).not.toHaveBeenCalled();
         // And no snapshot or send happened.
@@ -434,7 +490,7 @@ describe('gemini ask orchestration', () => {
     it('includes available models and suggests opencli gemini models in invalid-model error', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryWithoutThinking(page);
 
         try {
             await askCommand.func(page, { prompt: 'hello', model: '99.9-nonexistent', timeout: 10, new: 'false' });
@@ -452,7 +508,7 @@ describe('gemini ask orchestration', () => {
     it('throws when model discovery returns non-array data', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: false });
+        setupDiscoveryNonArray(page);
 
         await expect(
             askCommand.func(page, { prompt: 'hello', model: '2.5-flash', timeout: 10, new: 'false' })
@@ -464,10 +520,14 @@ describe('gemini ask orchestration', () => {
     it('unwraps Browser Bridge envelope { session, data } for model discovery', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        // The envelope is returned by readMenuModelsScript.
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true }); // picker click
         vi.mocked(page.evaluate).mockResolvedValueOnce({
             session: 'site:gemini',
             data: FIXTURE_MODELS,
-        });
+        }); // read models
+        vi.mocked(page.evaluate).mockResolvedValueOnce(false); // toggle
+        vi.mocked(page.evaluate).mockResolvedValueOnce(undefined); // close
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
@@ -483,7 +543,7 @@ describe('gemini ask orchestration', () => {
     it('handles empty model discovery result gracefully', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce([]);
+        setupDiscoveryEmpty(page);
 
         await expect(
             askCommand.func(page, { prompt: 'hello', model: '2.5-flash', timeout: 10, new: 'false' })
@@ -498,7 +558,7 @@ describe('gemini ask orchestration', () => {
         // (for selection) and never called again (for restoration).
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryWithoutThinking(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
@@ -526,7 +586,7 @@ describe('gemini ask orchestration', () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
         mocks.startNewGeminiChat.mockResolvedValueOnce('clicked');
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryWithoutThinking(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
         mocks.sendGeminiMessage.mockResolvedValueOnce('button');
@@ -893,8 +953,7 @@ describe('gemini ask thinking selection', () => {
             .mockReturnValueOnce(2000);
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        // Single discovery call shared by model and thinking selection.
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryMocks(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         // getCurrentGeminiModel should NOT be called because --model overrides it
         mocks.getCurrentGeminiModel.mockResolvedValue('2.5-flash');
@@ -915,8 +974,9 @@ describe('gemini ask thinking selection', () => {
     it('rejects thinking not available for the selected model (--model + --thinking mismatch)', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        // Single discovery call: 2.5-flash only supports standard, not extended.
-        page.evaluate.mockResolvedValueOnce([
+        // Multi-step discovery WITHOUT thinking extraction so per-model
+        // thinkingValues from the discovery data are preserved.
+        setupDiscoveryWithoutThinking(page, [
             { model: '2.5-flash', thinkingValues: ['standard'] },
             { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
         ]);
@@ -942,14 +1002,18 @@ describe('gemini ask thinking selection', () => {
     it('unwraps Browser Bridge envelope for thinking discovery before scoped validation', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        // Single discovery call wrapped by Browser Bridge: 2.5-flash only supports standard.
-        page.evaluate.mockResolvedValueOnce({
+        // Multi-step discovery: picker click → envelope-wrapped read → toggle=false → close
+        // (no thinking extraction so per-model values are preserved)
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
+        vi.mocked(page.evaluate).mockResolvedValueOnce({
             session: 'site:gemini',
             data: [
                 { model: '2.5-flash', thinkingValues: ['standard'] },
                 { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
             ],
         });
+        vi.mocked(page.evaluate).mockResolvedValueOnce(false); // toggle not found
+        vi.mocked(page.evaluate).mockResolvedValueOnce(undefined); // close
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
 
         let err;
@@ -1014,7 +1078,7 @@ describe('gemini ask thinking selection', () => {
             .mockReturnValueOnce(2000);
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryMocks(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         setupHappyPath();
 
@@ -1023,8 +1087,8 @@ describe('gemini ask thinking selection', () => {
             model: '2.5-flash', thinking: 'standard',
         });
 
-        // page.evaluate (discovery) is called exactly once, shared by both blocks.
-        expect(page.evaluate).toHaveBeenCalledTimes(1);
+        // page.evaluate is called 5 times (picker, read, toggle, thinking, close).
+        expect(page.evaluate).toHaveBeenCalledTimes(5);
     });
 
     it('applies model and thinking before snapshot when both flags are supplied (no --new)', async () => {
@@ -1033,7 +1097,7 @@ describe('gemini ask thinking selection', () => {
             .mockReturnValueOnce(2000);
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryMocks(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         setupHappyPath();
 
@@ -1059,7 +1123,7 @@ describe('gemini ask thinking selection', () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
         mocks.startNewGeminiChat.mockResolvedValueOnce('clicked');
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryMocks(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         setupHappyPath();
 
@@ -1081,7 +1145,7 @@ describe('gemini ask thinking selection', () => {
     it('stops before snapshot and send when combined validation fails (invalid model)', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryMocks(page);
 
         let err;
         try {
@@ -1103,8 +1167,7 @@ describe('gemini ask thinking selection', () => {
     it('stops before snapshot and send when combined validation fails (thinking unavailable)', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        // Single discovery: 2.5-flash-lite has no thinking values.
-        page.evaluate.mockResolvedValueOnce([
+        setupDiscoveryWithoutThinking(page, [
             { model: '2.5-flash-lite', thinkingValues: [] },
             { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
         ]);
@@ -1132,7 +1195,7 @@ describe('gemini ask thinking selection', () => {
             .mockReturnValueOnce(2000);
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryMocks(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         setupHappyPath();
 
@@ -1154,7 +1217,7 @@ describe('gemini ask thinking selection', () => {
             .mockReturnValueOnce(2000);
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        setupDiscoveryMocks(page);
         mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
         setupHappyPath();
 

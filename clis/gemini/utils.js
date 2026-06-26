@@ -2526,14 +2526,18 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
  * Returns { ok: true } on success, or { ok: false, reason: "..." }
  * when the picker or model item could not be found / clicked.
  */
-export function selectGeminiModelScript(modelId) {
+/**
+ * Browser evaluate script that finds and clicks a model entry in an
+ * already-open Gemini model-picker menu.  Does NOT open the picker.
+ */
+function selectModelInMenuScript(modelId) {
     return `
     (() => {
       const targetModelId = ${JSON.stringify(modelId)};
       if (!targetModelId) return { ok: false, reason: 'No model id provided' };
 
       const isVisible = (el) => {
-        if (!(el instanceof HTMLElement)) return false;
+        if (!(el instanceof HTMLElement) && !(el instanceof Element)) return false;
         if (el.hidden || el.closest('[hidden]')) return false;
         const ariaHidden = el.getAttribute('aria-hidden');
         if (ariaHidden && ariaHidden.toLowerCase() === 'true') return false;
@@ -2547,7 +2551,6 @@ export function selectGeminiModelScript(modelId) {
 
       const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
 
-      // ── Canonical model-id helper (same logic as discovery script) ──
       const canonicalModelId = (raw) => {
         const text = normalize(raw);
         if (!text) return '';
@@ -2572,91 +2575,6 @@ export function selectGeminiModelScript(modelId) {
         return '';
       };
 
-      // ── Find model picker button (full 4-method strategy from models.js) ──
-      const VERSION_LABEL_RE = /\\d+\\.\\d+/;
-
-      const MODE_SELECTOR_PATTERNS = [
-        /模式选择器/i,
-        /mode[\\s-]*selector/i,
-        /model[\\s-]*selector/i,
-        /model[\\s-]*picker/i,
-        /选择模型/i,
-        /select[\\s-]+model/i,
-        /choose[\\s-]+model/i,
-        /switch[\\s-]+model/i,
-        /change[\\s-]+model/i,
-      ];
-
-      const MODEL_VARIANT_RE = /^(?:gemini\\s+)?(flash|lite|pro|ultra|nano|flash-lite|flash[\\s-]*thinking)$/i;
-
-      const findModelPicker = () => {
-        const buttons = Array.from(
-          document.querySelectorAll('button, [role="button"]')
-        ).filter(isVisible);
-
-        // Method 1: Detect model/mode selector via aria-label patterns.
-        for (const button of buttons) {
-          const aria = normalize(button.getAttribute('aria-label') || '');
-          for (const pattern of MODE_SELECTOR_PATTERNS) {
-            if (pattern.test(aria)) return button;
-          }
-        }
-
-        // Method 2: Detect buttons whose text contains a model-version pattern.
-        const versionCandidates = buttons.filter((b) => {
-          const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
-          return VERSION_LABEL_RE.test(text) && text.length < 80;
-        });
-        versionCandidates.sort((a, b) => {
-          const aRect = a.getBoundingClientRect();
-          const bRect = b.getBoundingClientRect();
-          return aRect.top - bRect.top || aRect.left - bRect.left;
-        });
-        if (versionCandidates.length > 0) return versionCandidates[0];
-
-        // Method 3: Detect buttons showing a known model variant as their
-        // sole text (e.g. "Pro", "Flash", "Flash-Lite").
-        const variantCandidates = buttons.filter((b) => {
-          const text = normalize(b.textContent || '');
-          return MODEL_VARIANT_RE.test(text) && text.length < 30;
-        });
-        variantCandidates.sort((a, b) => {
-          const aRect = a.getBoundingClientRect();
-          const bRect = b.getBoundingClientRect();
-          return aRect.top - bRect.top || aRect.left - bRect.left;
-        });
-        if (variantCandidates.length > 0) return variantCandidates[0];
-
-        // Method 4: Fallback — look for any element with model-related attributes.
-        const attrEls = Array.from(
-          document.querySelectorAll('[data-model-selector], [aria-label*="model" i], [aria-label*="模式" i]')
-        ).filter(isVisible);
-        if (attrEls.length > 0) return attrEls[0];
-
-        return null;
-      };
-
-      const picker = findModelPicker();
-      if (!picker) return { ok: false, reason: 'Model picker button not found' };
-
-      // ── Open the picker menu ──
-      try {
-        const rect = picker.getBoundingClientRect();
-        const init = {
-          bubbles: true, cancelable: true, button: 0, buttons: 1,
-          clientX: Math.round(rect.left + rect.width / 2),
-          clientY: Math.round(rect.top + rect.height / 2),
-        };
-        picker.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerType: 'mouse' }));
-        picker.dispatchEvent(new MouseEvent('mousedown', init));
-        picker.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerType: 'mouse' }));
-        picker.dispatchEvent(new MouseEvent('mouseup', init));
-        picker.dispatchEvent(new MouseEvent('click', init));
-      } catch (_) {
-        return { ok: false, reason: 'Failed to open model picker menu' };
-      }
-
-      // ── Find visible menu items ──
       const MENU_SELECTORS = [
         '[role="menu"] [role="menuitem"]',
         '[role="menu"] [role="menuitemradio"]',
@@ -2669,6 +2587,8 @@ export function selectGeminiModelScript(modelId) {
         '[role="dialog"] [role="option"]',
         '[aria-modal="true"] [role="menuitem"]',
         '[aria-modal="true"] [role="option"]',
+        'gem-menu-item',
+        'GEM-MENU-ITEM',
       ];
 
       let menuItems = [];
@@ -2683,13 +2603,12 @@ export function selectGeminiModelScript(modelId) {
         ).filter(isVisible);
         for (const container of containers) {
           const children = Array.from(
-            container.querySelectorAll('button, [role="button"], li, [role="menuitem"], [role="option"]')
+            container.querySelectorAll('button, [role="button"], li, [role="menuitem"], [role="option"], gem-menu-item, GEM-MENU-ITEM, :not(script):not(style)')
           ).filter(isVisible);
           if (children.length >= 2) { menuItems = children; break; }
         }
       }
 
-      // ── Find and click the matching menu item ──
       let matched = null;
       for (const item of menuItems) {
         const id = canonicalModelId(item.textContent || '');
@@ -2700,7 +2619,6 @@ export function selectGeminiModelScript(modelId) {
       }
 
       if (!matched) {
-        // Close the menu before returning.
         try { document.body.click(); } catch (_) {}
         return { ok: false, reason: 'Model "' + targetModelId + '" not found in picker menu' };
       }
@@ -2718,12 +2636,36 @@ export function selectGeminiModelScript(modelId) {
 }
 
 /**
+ * Legacy wrapper kept for test compatibility — delegates to
+ * selectModelInMenuScript.  New callers should prefer the split
+ * openModelPickerForThinkingScript + selectModelInMenuScript
+ * pattern with an explicit page.wait between them.
+ */
+export function selectGeminiModelScript(modelId) {
+    return selectModelInMenuScript(modelId);
+}
+
+/**
  * Select a Gemini model by canonical id (e.g. "2.5-flash") in the
- * web UI model picker.  Throws CommandExecutionError on failure.
+ * web UI model picker.  Opens the picker, waits for React, then clicks
+ * the matching entry.  Throws CommandExecutionError on failure.
  */
 export async function selectGeminiModel(page, modelId) {
     await ensureGeminiPage(page);
-    const raw = await page.evaluate(selectGeminiModelScript(modelId));
+
+    // Open the picker menu.
+    const pickerResult = await page.evaluate(openModelPickerForThinkingScript());
+    if (!pickerResult || !pickerResult.ok) {
+        throw new CommandExecutionError(
+            pickerResult?.reason || 'Failed to open model picker for model selection'
+        );
+    }
+
+    // Wait for React to render the menu.
+    await page.wait(0.8);
+
+    // Find and click the matching menu item.
+    const raw = await page.evaluate(selectModelInMenuScript(modelId));
     const result = typeof raw === 'object' && raw !== null && 'data' in raw && 'session' in raw
         ? raw.data
         : raw;
