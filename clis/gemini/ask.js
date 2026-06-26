@@ -25,6 +25,13 @@ const NO_RESPONSE_PREFIX = '[NO RESPONSE]';
  * Validate a --model value for gemini ask.
  * Throws ArgumentError for short aliases or invalid formats.
  */
+function unwrapBrowserBridgeEnvelope(value) {
+    if (value && typeof value === 'object' && 'data' in value && 'session' in value) {
+        return value.data;
+    }
+    return value;
+}
+
 function validateAskModelValue(value) {
     if (!value) {
         throw new ArgumentError(
@@ -87,9 +94,7 @@ export const askCommand = cli({
             validateAskModelValue(modelValue);
             await ensureGeminiPage(page);
             const raw = await page.evaluate(discoverModelsScript());
-            const availableModels = (typeof raw === 'object' && raw !== null && 'data' in raw && 'session' in raw
-                ? raw.data
-                : raw) || [];
+            const availableModels = unwrapBrowserBridgeEnvelope(raw) || [];
             if (!Array.isArray(availableModels)) {
                 throw new ArgumentError(
                     'Failed to discover Gemini models. Use "opencli gemini models" to see available values.'
@@ -124,7 +129,8 @@ export const askCommand = cli({
 
             // Discover all models and find the target model.
             const discoveredRaw = await page.evaluate(discoverModelsScript());
-            const discovered = Array.isArray(discoveredRaw) ? discoveredRaw : [];
+            const unwrappedDiscovered = unwrapBrowserBridgeEnvelope(discoveredRaw);
+            const discovered = Array.isArray(unwrappedDiscovered) ? unwrappedDiscovered : [];
 
             // When --model was supplied, scope thinking to the selected model;
             // otherwise scope to the current model from the web UI.

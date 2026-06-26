@@ -946,6 +946,37 @@ describe('gemini ask thinking selection', () => {
         expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
     });
 
+    it('unwraps Browser Bridge envelope for thinking discovery before scoped validation', async () => {
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        // First evaluate: model discovery for selection
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        // Second evaluate: thinking discovery arrives wrapped by Browser Bridge.
+        page.evaluate.mockResolvedValueOnce({
+            session: 'site:gemini',
+            data: [
+                { model: '2.5-flash', thinkingValues: ['standard'] },
+                { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
+            ],
+        });
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20,
+                model: '2.5-flash', thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain('not available for the selected model');
+        expect(err.hint).toContain('standard');
+        expect(err.hint).not.toContain('extended');
+
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+    });
+
     it('uses current model for scoping when --model is omitted (unchanged behavior)', async () => {
         const page = createPageMock();
         setupDiscoveryAndModel(page,
