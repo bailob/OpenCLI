@@ -33,8 +33,10 @@ const FIXTURE_MODELS = [
 
 const mocks = vi.hoisted(() => ({
     ensureGeminiPage: vi.fn(),
+    getCurrentGeminiModel: vi.fn(),
     readGeminiSnapshot: vi.fn(),
     selectGeminiModel: vi.fn(),
+    selectGeminiThinking: vi.fn(),
     sendGeminiMessage: vi.fn(),
     startNewGeminiChat: vi.fn(),
     waitForGeminiSubmission: vi.fn(),
@@ -46,14 +48,27 @@ vi.mock('./utils.js', async () => {
     return {
         ...actual,
         ensureGeminiPage: mocks.ensureGeminiPage,
+        getCurrentGeminiModel: mocks.getCurrentGeminiModel,
         readGeminiSnapshot: mocks.readGeminiSnapshot,
         selectGeminiModel: mocks.selectGeminiModel,
+        selectGeminiThinking: mocks.selectGeminiThinking,
         sendGeminiMessage: mocks.sendGeminiMessage,
         startNewGeminiChat: mocks.startNewGeminiChat,
         waitForGeminiSubmission: mocks.waitForGeminiSubmission,
         waitForGeminiResponse: mocks.waitForGeminiResponse,
     };
 });
+
+// Mock models.js — stub discoverModelsScript to return a marker string.
+const modelsMock = vi.hoisted(() => ({
+    discoverModelsScript: vi.fn().mockReturnValue('__DISCOVER_SCRIPT__'),
+}));
+vi.mock('./models.js', () => ({
+    discoverModelsScript: modelsMock.discoverModelsScript,
+    __test__: {
+        discoverModelsScript: modelsMock.discoverModelsScript,
+    },
+}));
 
 import { askCommand, __test__ } from './ask.js';
 
@@ -109,12 +124,19 @@ describe('ask command registration', () => {
         expect(modelArg.type).toBe('string');
     });
 
+    it('includes --thinking as an optional argument', () => {
+        const thinkingArg = askCommand.args.find((a) => a.name === 'thinking');
+        expect(thinkingArg).toBeDefined();
+        expect(thinkingArg.required).toBe(false);
+    });
+
     it('still includes prompt, timeout, and new args', () => {
         const names = askCommand.args.map((a) => a.name);
         expect(names).toContain('prompt');
         expect(names).toContain('timeout');
         expect(names).toContain('new');
         expect(names).toContain('model');
+        expect(names).toContain('thinking');
     });
 });
 
@@ -165,6 +187,27 @@ describe('validateAskModelValue', () => {
         }
     });
 });
+
+/**
+ * Helper: set up the two evaluate calls needed for thinking validation:
+ *   1. discoverModelsScript (via page.evaluate)
+ *   2. getCurrentGeminiModel (mocked separately)
+ */
+function setupDiscoveryAndModel(page, discoveredModels, currentModel) {
+    page.evaluate.mockResolvedValueOnce(discoveredModels);
+    mocks.getCurrentGeminiModel.mockResolvedValueOnce(currentModel);
+}
+
+/**
+ * Helper: set up the full happy-path mocks after thinking validation.
+ */
+function setupHappyPath() {
+    mocks.selectGeminiThinking.mockResolvedValueOnce('Selected');
+    mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
+    mocks.sendGeminiMessage.mockResolvedValueOnce('button');
+    mocks.waitForGeminiSubmission.mockResolvedValueOnce(submission);
+    mocks.waitForGeminiResponse.mockResolvedValueOnce('OK');
+}
 
 // ── gemini ask orchestration ─────────────────────────────────────────────
 
@@ -496,5 +539,479 @@ describe('gemini ask orchestration', () => {
         const selectCallOrder = mocks.selectGeminiModel.mock.invocationCallOrder[0];
         const newChatCallOrder = mocks.startNewGeminiChat.mock.invocationCallOrder[0];
         expect(selectCallOrder).toBeLessThan(newChatCallOrder);
+    });
+});
+
+describe('gemini ask thinking selection', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    // ── Valid thinking selection (current model matched) ─────────────
+    it('selects standard thinking when current model supports it', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: '请只回复：OK', timeout: 20, new: 'false', thinking: 'standard',
+        });
+
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledWith(page, 'standard');
+        const selectCall = mocks.selectGeminiThinking.mock.invocationCallOrder[0];
+        const snapshotCall = mocks.readGeminiSnapshot.mock.invocationCallOrder[0];
+        expect(selectCall).toBeLessThan(snapshotCall);
+        expect(result).toEqual([{ response: '💬 OK' }]);
+    });
+
+    it('selects extended thinking when current model supports it', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-pro', thinkingValues: ['standard', 'extended'] }],
+            '2.5-pro',
+        );
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: 'test', timeout: 20, new: 'false', thinking: 'extended',
+        });
+
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledWith(page, 'extended');
+        expect(result[0].response).toContain('OK');
+    });
+
+    it('selects thinking with --new true: new chat before thinking before snapshot', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        mocks.startNewGeminiChat.mockResolvedValueOnce('navigate');
+        setupHappyPath();
+
+        await askCommand.func(page, {
+            prompt: 'test', timeout: 20, new: 'true', thinking: 'standard',
+        });
+
+        const newChatCall = mocks.startNewGeminiChat.mock.invocationCallOrder[0];
+        const thinkingCall = mocks.selectGeminiThinking.mock.invocationCallOrder[0];
+        const snapshotCall = mocks.readGeminiSnapshot.mock.invocationCallOrder[0];
+        expect(newChatCall).toBeLessThan(thinkingCall);
+        expect(thinkingCall).toBeLessThan(snapshotCall);
+    });
+
+    // ── Invalid thinking value (not standard or extended) ────────────
+    it('rejects invalid thinking value with ArgumentError', async () => {
+        const page = createPageMock();
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'invalid',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("--thinking must be 'standard' or 'extended'");
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+        expect(mocks.sendGeminiMessage).not.toHaveBeenCalled();
+    });
+
+    it('rejects empty thinking value', async () => {
+        const page = createPageMock();
+        let err;
+        try {
+            await askCommand.func(page, { prompt: 'test', timeout: 20, thinking: '' });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("--thinking must be 'standard' or 'extended'");
+    });
+
+    // ── Current-model-scoped validation ──────────────────────────────
+    it('rejects thinking not available for the current model (cross-model mismatch)', async () => {
+        const page = createPageMock();
+        // Two models: 2.5-flash supports 'standard' only, 2.5-pro supports extended.
+        // Current model is 2.5-flash, but user requests 'extended'.
+        setupDiscoveryAndModel(page,
+            [
+                { model: '2.5-flash', thinkingValues: ['standard'] },
+                { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
+            ],
+            '2.5-flash',
+        );
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("not available for the current model");
+        expect(err.message).toContain("2.5-flash");
+        expect(err.hint).toContain("standard");
+        // Must NOT mention 'extended' as available (it's not on this model).
+        expect(err.hint).not.toContain("extended");
+
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('rejects thinking when current model has no thinking values at all', async () => {
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash-lite', thinkingValues: [] }],
+            '2.5-flash-lite',
+        );
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'standard',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("not available for the current model");
+
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+    });
+
+    // ── Union fallback when current model unknown ────────────────────
+    it('falls back to union validation when current model is empty', async () => {
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard'] }],
+            '',  // current model unknown → union fallback
+        );
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("not currently available");
+        expect(err.hint).toContain("standard");
+    });
+
+    it('falls back to union when current model not found in discovered set', async () => {
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard'] }],
+            '3.0-unknown-model',  // not in discovered set
+        );
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("not currently available");
+    });
+
+    // ── Graceful degradation when discovery returns empty ────────────
+    it('proceeds when discovery returns empty', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        setupDiscoveryAndModel(page, [], '');
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: 'test', timeout: 20, thinking: 'standard',
+        });
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledWith(page, 'standard');
+        expect(result[0].response).toContain('OK');
+    });
+
+    it('rejects thinking when current model has empty thinking values', async () => {
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: [] }],
+            '2.5-flash',
+        );
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        // Scoped validation: current model known, but thinkingValues is empty → reject.
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("not available for the current model");
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+    });
+
+    // ── Failed thinking selection ────────────────────────────────────
+    it('throws when selectGeminiThinking returns empty after successful validation', async () => {
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        mocks.selectGeminiThinking.mockResolvedValueOnce('');  // failed selection
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'standard',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("Could not select thinking level");
+
+        // Must not proceed to snapshot or send.
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+        expect(mocks.sendGeminiMessage).not.toHaveBeenCalled();
+    });
+
+    it('failed selection hint includes model-specific info when current model known', async () => {
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        mocks.selectGeminiThinking.mockResolvedValueOnce('');
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20, thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.hint).toContain("2.5-flash");
+        expect(err.hint).toContain("standard");
+        expect(err.hint).toContain("extended");
+        expect(err.hint).toContain("gemini models");
+    });
+
+    // ── Omitted thinking ─────────────────────────────────────────────
+    it('omitted --thinking does not call selectGeminiThinking', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
+        mocks.sendGeminiMessage.mockResolvedValueOnce('button');
+        mocks.waitForGeminiSubmission.mockResolvedValueOnce(submission);
+        mocks.waitForGeminiResponse.mockResolvedValueOnce('OK');
+
+        await askCommand.func(page, { prompt: 'test', timeout: 20, new: 'false' });
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+    });
+
+    it('null thinking does not call selectGeminiThinking', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.readGeminiSnapshot.mockResolvedValueOnce(baseline);
+        mocks.sendGeminiMessage.mockResolvedValueOnce('button');
+        mocks.waitForGeminiSubmission.mockResolvedValueOnce(submission);
+        mocks.waitForGeminiResponse.mockResolvedValueOnce('OK');
+
+        await askCommand.func(page, { prompt: 'test', timeout: 20, thinking: null });
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+    });
+
+    // ── Case insensitivity ───────────────────────────────────────────
+    it('accepts uppercase thinking value', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: 'test', timeout: 20, thinking: 'STANDARD',
+        });
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledWith(page, 'standard');
+        expect(result[0].response).toContain('OK');
+    });
+
+    it('accepts mixed-case thinking value', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: 'test', timeout: 20, thinking: 'ExTeNdEd',
+        });
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledWith(page, 'extended');
+        expect(result[0].response).toContain('OK');
+    });
+
+    // ── Does not restore thinking after completion ───────────────────
+    it('does not call selectGeminiThinking again after send', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        setupHappyPath();
+
+        await askCommand.func(page, {
+            prompt: 'test', timeout: 20, thinking: 'standard',
+        });
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledTimes(1);
+    });
+
+    // ── --model + --thinking integration ───────────────────────────
+    it('scopes thinking validation to the selected model when --model is supplied', async () => {
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(0)
+            .mockReturnValueOnce(2000);
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        // First evaluate: model discovery (model selection block)
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        // Second evaluate: thinking discovery
+        page.evaluate.mockResolvedValueOnce([
+            { model: '2.5-flash', thinkingValues: ['standard'] },
+            { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
+        ]);
+        // getCurrentGeminiModel should NOT be called because --model overrides it
+        mocks.getCurrentGeminiModel.mockResolvedValue('2.5-flash');
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: 'test', timeout: 20, new: 'false',
+            model: '2.5-pro', thinking: 'extended',
+        });
+
+        // Thinking validated against selected model (2.5-pro), not current (2.5-flash).
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledWith(page, 'extended');
+        // getCurrentGeminiModel should NOT have been called when --model is supplied.
+        expect(mocks.getCurrentGeminiModel).not.toHaveBeenCalled();
+        expect(result[0].response).toContain('OK');
+    });
+
+    it('rejects thinking not available for the selected model (--model + --thinking mismatch)', async () => {
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        // First evaluate: model discovery for selection
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        // Second evaluate: thinking discovery — only standard available for 2.5-flash
+        page.evaluate.mockResolvedValueOnce([
+            { model: '2.5-flash', thinkingValues: ['standard'] },
+            { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
+        ]);
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20,
+                model: '2.5-flash', thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain("not available for the selected model");
+        expect(err.message).toContain("2.5-flash");
+        expect(err.hint).toContain("standard");
+        expect(err.hint).not.toContain("extended");
+
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('unwraps Browser Bridge envelope for thinking discovery before scoped validation', async () => {
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        // First evaluate: model discovery for selection
+        page.evaluate.mockResolvedValueOnce(FIXTURE_MODELS);
+        mocks.selectGeminiModel.mockResolvedValueOnce(undefined);
+        // Second evaluate: thinking discovery arrives wrapped by Browser Bridge.
+        page.evaluate.mockResolvedValueOnce({
+            session: 'site:gemini',
+            data: [
+                { model: '2.5-flash', thinkingValues: ['standard'] },
+                { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
+            ],
+        });
+
+        let err;
+        try {
+            await askCommand.func(page, {
+                prompt: 'test', timeout: 20,
+                model: '2.5-flash', thinking: 'extended',
+            });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.message).toContain('not available for the selected model');
+        expect(err.hint).toContain('standard');
+        expect(err.hint).not.toContain('extended');
+
+        expect(mocks.selectGeminiThinking).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('uses current model for scoping when --model is omitted (unchanged behavior)', async () => {
+        const page = createPageMock();
+        setupDiscoveryAndModel(page,
+            [{ model: '2.5-flash', thinkingValues: ['standard', 'extended'] }],
+            '2.5-flash',
+        );
+        setupHappyPath();
+
+        const result = await askCommand.func(page, {
+            prompt: 'test', timeout: 20, new: 'false', thinking: 'standard',
+        });
+
+        expect(mocks.getCurrentGeminiModel).toHaveBeenCalled();
+        expect(mocks.selectGeminiThinking).toHaveBeenCalledWith(page, 'standard');
+        expect(result[0].response).toContain('OK');
+    });
+
+    // ── Error message suggests gemini models ────────────────────────
+    it('error hint suggests gemini models for invalid values', async () => {
+        const page = createPageMock();
+        let err;
+        try {
+            await askCommand.func(page, { prompt: 'test', timeout: 20, thinking: 'bad-value' });
+        } catch (e) { err = e; }
+        expect(err).toBeInstanceOf(ArgumentError);
+        expect(err.hint).toContain('gemini models');
+    });
+
+    it('invalid thinking value caught by first check does not trigger discovery', async () => {
+        const page = createPageMock();
+        try {
+            await askCommand.func(page, { prompt: 'test', timeout: 20, thinking: 'bad' });
+        } catch (_) {}
+        // First check should catch it; neither discovery nor current-model lookup runs.
+        expect(page.evaluate).not.toHaveBeenCalled();
+        expect(mocks.getCurrentGeminiModel).not.toHaveBeenCalled();
     });
 });

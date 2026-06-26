@@ -32,6 +32,12 @@ opencli gemini ask "Explain quantum computing in one sentence" --model 2.5-flash
 # Ask in a new chat and wait longer
 opencli gemini ask "Summarize this design in 3 bullets" --new true --timeout 90
 
+# Ask with extended thinking
+opencli gemini ask "Explain quantum computing" --thinking extended
+
+# Ask with standard thinking in a fresh chat
+opencli gemini ask "Hello" --new true --thinking standard
+
 # Generate an icon image with short flags
 opencli gemini image "Generate a tiny cyan moon icon" --rt 1:1 --st icon
 
@@ -58,6 +64,7 @@ opencli gemini models -f json
 | `--model` | Gemini model to use (e.g. `2.5-flash`, `2.5-pro`). Use `opencli gemini models` to list available values. |
 | `--timeout` | Max seconds to wait for a reply (default: `60`) |
 | `--new` | Start a new chat before sending (default: `false`) |
+| `--thinking` | Thinking level: `standard` or `extended` (omitted = leave unchanged) |
 
 ### `image`
 
