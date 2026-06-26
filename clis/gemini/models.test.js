@@ -58,7 +58,8 @@ describe('gemini models', () => {
     it('returns model rows with model and thinkingValues columns', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
-        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODEL_ROWS);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });  // picker click
+        vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODEL_ROWS);  // menu read
 
         const rows = await modelsCommand.func(page);
 
@@ -71,6 +72,7 @@ describe('gemini models', () => {
     it('calls ensureGeminiPage before discovery', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODEL_ROWS);
 
         await modelsCommand.func(page);
@@ -82,19 +84,21 @@ describe('gemini models', () => {
     it('is read-only: does not start a new chat, send a message, or select a model', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce(FIXTURE_MODEL_ROWS);
 
         await modelsCommand.func(page);
 
         // ensureGeminiPage always gets called, but no other stateful utils.
         expect(mocks.ensureGeminiPage).toHaveBeenCalledTimes(1);
-        // evaluate is called exactly once for the discovery script.
-        expect(page.evaluate).toHaveBeenCalledTimes(1);
+        // evaluate is called 4 times: picker click, model read, toggle click, close menu.
+        expect(page.evaluate).toHaveBeenCalledTimes(4);
     });
 
     it('unwraps Browser Bridge envelope { session, data }', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce({
             session: 'site:gemini',
             data: FIXTURE_MODEL_ROWS,
@@ -108,6 +112,7 @@ describe('gemini models', () => {
     it('returns empty array when no model picker is found (empty evaluate result)', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce([]);
 
         const rows = await modelsCommand.func(page);
@@ -118,6 +123,7 @@ describe('gemini models', () => {
     it('throws CommandExecutionError when evaluate returns a non-array result', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: false });
 
         await expect(modelsCommand.func(page)).rejects.toBeInstanceOf(CommandExecutionError);
@@ -126,6 +132,7 @@ describe('gemini models', () => {
     it('throws CommandExecutionError when a row is missing the model field', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce([
             { thinkingValues: ['standard'] },
         ]);
@@ -136,6 +143,7 @@ describe('gemini models', () => {
     it('throws CommandExecutionError when a row has a non-array thinkingValues field', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce([
             { model: '2.5-flash', thinkingValues: 'standard' },
         ]);
@@ -146,6 +154,7 @@ describe('gemini models', () => {
     it('accepts rows with empty thinkingValues array', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce([
             { model: '2.5-flash', thinkingValues: [] },
             { model: '2.5-pro', thinkingValues: [] },
@@ -161,6 +170,7 @@ describe('gemini models', () => {
     it('keeps model values as strings and thinkingValues as string arrays', async () => {
         const page = createPageMock();
         mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
         vi.mocked(page.evaluate).mockResolvedValueOnce([
             { model: '2.5-flash-lite', thinkingValues: ['standard'] },
             { model: '2.5-pro', thinkingValues: ['standard', 'extended'] },
@@ -303,30 +313,18 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
               <button>New chat</button>
             </header>
             <div id="model-menu" role="menu" style="display: none;">
-              <div role="menuitem">
-                <span>2.5 Flash</span>
-                <span>standard</span>
-                <span>extended</span>
-              </div>
-              <div role="menuitem">
-                <span>2.5 Flash Lite</span>
-                <span>standard</span>
-              </div>
-              <div role="menuitem">
-                <span>2.5 Pro</span>
-                <span>standard</span>
-                <span>extended</span>
-              </div>
-              <div role="menuitem">
-                <span>2.5 Flash Thinking</span>
-              </div>
+              <div role="menuitem">2.5 Flash</div>
+              <div role="menuitem">2.5 Flash Lite</div>
+              <div role="menuitem">2.5 Pro</div>
+              <div role="menuitem">2.5 Flash Thinking</div>
+              <!-- Thinking levels as separate menu items (Gemini Web pattern) -->
+              <div role="menuitem">Standard</div>
+              <div role="menuitem">Extended</div>
             </div>
           `);
 
-        // Show the menu when the picker receives a mousedown (simulating Gemini
-        // React rendering the dropdown).  The script dispatches mousedown before
-        // mouseup/click, so the menu is visible by the time findMenuItems() runs.
-        document.getElementById('model-picker').addEventListener('mousedown', () => {
+        // Click handler opens the menu (simulating React render on click).
+        document.getElementById('model-picker').addEventListener('click', () => {
             document.getElementById('model-menu').style.display = 'block';
         });
 
@@ -339,10 +337,10 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
         const models = new Map(result.map((r) => [r.model, r.thinkingValues]));
 
         expect(models.get('2.5-flash')).toEqual(['standard', 'extended']);
-        expect(models.get('2.5-flash-lite')).toEqual(['standard']);
+        expect(models.get('2.5-flash-lite')).toEqual(['standard', 'extended']);
         expect(models.get('2.5-pro')).toEqual(['standard', 'extended']);
         expect(models.has('2.5-flash-thinking')).toBe(true);
-        expect(models.get('2.5-flash-thinking')).toEqual([]);
+        expect(models.get('2.5-flash-thinking')).toEqual(['standard', 'extended']);
     });
 
     it('extracts models from menu items with role=option inside role=listbox', () => {
@@ -357,7 +355,7 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
             </div>
           `);
 
-        document.getElementById('model-picker').addEventListener('mousedown', () => {
+        document.getElementById('model-picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -379,7 +377,7 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -388,25 +386,19 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
         expect(modelIds).toEqual(['3.1-flash-lite', '3.1-pro', '3.5-flash']);
     });
 
-    it('extracts thinking values from sibling controls inside menu items', () => {
+    it('extracts thinking values from separate thinking-level menu items', () => {
         const { window, document } = createGeminiDom(`
             <button id="picker">2.5 Flash</button>
             <div id="menu" role="menu" style="display: none;">
-              <div role="menuitem">
-                <span>2.5 Flash</span>
-                <button>Standard</button>
-                <button>Extended</button>
-              </div>
-              <div role="menuitem">
-                <span>2.5 Pro</span>
-                <label>
-                  <input type="radio" name="think-2.5-pro" /> Extended
-                </label>
-              </div>
+              <div role="menuitem">2.5 Flash</div>
+              <div role="menuitem">2.5 Pro</div>
+              <!-- Thinking levels as separate items (real Gemini Web pattern) -->
+              <div role="menuitem">Standard</div>
+              <div role="menuitem">Extended</div>
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -415,8 +407,7 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
         expect(result).toHaveLength(2);
         const models = new Map(result.map((r) => [r.model, r.thinkingValues]));
         expect(models.get('2.5-flash')).toEqual(['standard', 'extended']);
-        // 2.5 Pro has an "Extended" label sibling → thinking value extracted.
-        expect(models.get('2.5-pro')).toEqual(['extended']);
+        expect(models.get('2.5-pro')).toEqual(['standard', 'extended']);
     });
 
     it('returns empty array when model picker is absent', () => {
@@ -444,7 +435,7 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -463,7 +454,7 @@ describe('discoverModelsScript — DOM fixture extraction', () => {
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -480,14 +471,11 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
             <button id="model-picker">2.5 Flash</button>
             <button id="new-chat-btn">New chat</button>
             <div id="model-menu" role="menu" style="display: none;">
-              <div role="menuitem" id="model-flash">2.5 Flash
-                <span>standard</span>
-                <span>extended</span>
-              </div>
-              <div role="menuitem" id="model-pro">2.5 Pro
-                <span>standard</span>
-                <span>extended</span>
-              </div>
+              <div role="menuitem" id="model-flash">2.5 Flash</div>
+              <div role="menuitem" id="model-pro">2.5 Pro</div>
+              <!-- Thinking items as separate menu items -->
+              <div role="menuitem" id="think-standard">Standard</div>
+              <div role="menuitem" id="think-extended">Extended</div>
             </div>
             <div id="composer">
               <div contenteditable="true">Enter a prompt</div>
@@ -495,8 +483,8 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
             </div>
           `);
 
-        // Show menu on mousedown.
-        document.getElementById('model-picker').addEventListener('mousedown', () => {
+        // Show menu on click.
+        document.getElementById('model-picker').addEventListener('click', () => {
             document.getElementById('model-menu').style.display = 'block';
         });
 
@@ -508,42 +496,35 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
         expect(Array.isArray(result)).toBe(true);
         expect(result.length).toBeGreaterThan(0);
 
-        // The picker button text is "2.5 Flash" — the script dispatches click on
-        // the picker to open the menu.  That's expected and allowed.
+        // The picker button is clicked to open the menu.  That's expected.
         expect(spy['2.5 Flash']).toBeGreaterThanOrEqual(1);
 
         // The script clicks document.body to close the menu.  That's allowed.
         expect(spy['(body)']).toBeGreaterThanOrEqual(1);
 
-        // BUT it must NOT click any model menu item, thinking control,
-        // new-chat button, or send button.
-        // Labels are normalised: whitespace collapsed to single spaces.
-        expect(spy['2.5 Flash standard extended'] || 0).toBe(0);
-        expect(spy['2.5 Pro standard extended'] || 0).toBe(0);
+        // BUT it must NOT click any model menu item, new-chat button, or send button.
+        expect(spy['2.5 Flash'] || 0).toBeGreaterThanOrEqual(1); // picker only
+        expect(spy['2.5 Pro'] || 0).toBe(0);
         expect(spy['New chat'] || 0).toBe(0);
-        expect(spy['standard'] || 0).toBe(0);
-        expect(spy['extended'] || 0).toBe(0);
         expect(spy['Send'] || 0).toBe(0);
+        // Thinking items as separate menuitems — should NOT be clicked.
+        expect(spy['Standard'] || 0).toBe(0);
+        expect(spy['Extended'] || 0).toBe(0);
     });
 
-    it('does not click thinking controls (buttons/labels inside menu items)', () => {
+    it('does not click thinking controls (separate menu items without toggle)', () => {
         const { window, document } = createGeminiDom(`
             <button id="picker">2.5 Flash</button>
             <div id="menu" role="menu" style="display: none;">
-              <div role="menuitem">
-                <span>2.5 Flash</span>
-                <button id="think-standard">Standard</button>
-                <button id="think-extended">Extended</button>
-              </div>
-              <div role="menuitem">
-                <span>2.5 Pro</span>
-                <label><input type="radio" name="t" /> Standard</label>
-                <label><input type="radio" name="t" /> Extended</label>
-              </div>
+              <div role="menuitem">2.5 Flash</div>
+              <div role="menuitem">2.5 Pro</div>
+              <!-- Thinking levels as separate menu items (no toggle present) -->
+              <div role="menuitem" id="think-standard">Standard</div>
+              <div role="menuitem" id="think-extended">Extended</div>
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -558,7 +539,7 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
         // Body click (menu dismiss) is allowed.
         expect(spy['(body)']).toBeGreaterThanOrEqual(1);
 
-        // Thinking control buttons must NOT receive clicks.
+        // Thinking items must NOT receive clicks (no 思考等级 toggle).
         expect(spy['Standard'] || 0).toBe(0);
         expect(spy['Extended'] || 0).toBe(0);
     });
@@ -572,7 +553,7 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -598,7 +579,7 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -611,25 +592,25 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
         expect(spy['Submit'] || 0).toBe(0);
     });
 
-    it('only dispatches events on the picker and body — no other elements receive clicks', () => {
+    it('only clicks the picker and body — no other elements receive clicks', () => {
         const { window, document } = createGeminiDom(`
             <button id="picker">3.1 Flash</button>
             <button>New chat</button>
             <button>Settings</button>
             <div id="menu" role="menu" style="display: none;">
               <div role="menuitem">3.1 Flash Lite</div>
-              <div role="menuitem">3.5 Flash
-                <button>Standard</button>
-                <button>Extended</button>
-              </div>
+              <div role="menuitem">3.5 Flash</div>
               <div role="menuitem">3.1 Pro</div>
+              <!-- Thinking items as separate menu items (no toggle) -->
+              <div role="menuitem">Standard</div>
+              <div role="menuitem">Extended</div>
             </div>
             <div>
               <button id="send" aria-label="Send message">Send</button>
             </div>
           `);
 
-        document.getElementById('picker').addEventListener('mousedown', () => {
+        document.getElementById('picker').addEventListener('click', () => {
             document.getElementById('menu').style.display = 'block';
         });
 
@@ -642,8 +623,6 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
         // The only elements that may receive clicks:
         //   - The model picker ("3.1 Flash") — to open the menu.
         //   - document.body — to close the menu.
-        //
-        // Everything else must have zero clicks.
         for (const [label, count] of Object.entries(spy)) {
             if (label === '3.1 Flash' || label === '(body)') {
                 expect(count).toBeGreaterThanOrEqual(1);
@@ -657,6 +636,7 @@ describe('discoverModelsScript — read-only verification (DOM fixture)', () => 
         expect(spy['Settings'] || 0).toBe(0);
         // Menu items should not receive clicks.
         expect(spy['3.1 Flash Lite'] || 0).toBe(0);
+        expect(spy['3.5 Flash'] || 0).toBe(0);
         expect(spy['3.1 Pro'] || 0).toBe(0);
         // Thinking controls should not receive clicks.
         expect(spy['Standard'] || 0).toBe(0);
