@@ -12,7 +12,7 @@ import {
   waitForGeminiResponse,
   waitForGeminiSubmission,
 } from './utils.js';
-import { discoverModelsScript } from './models.js';
+import { pickModelPickerScript, readMenuModelsScript, clickThinkingToggleScript, extractThinkingScript } from './models.js';
 function normalizeBooleanFlag(value) {
     if (typeof value === 'boolean')
         return value;
@@ -114,14 +114,45 @@ export const askCommand = cli({
             }
         }
 
-        // ── Model and thinking discovery (single discovery call shared by
-        //    both model selection and thinking selection) ─────────────────
+        // ── Model and thinking discovery (shared by both model and
+        //    thinking selection) ──────────────────────────────────────
         let discoveredModels = null;
         if (hasModel || hasThinking) {
             await ensureGeminiPage(page);
-            const raw = await page.evaluate(discoverModelsScript());
+
+            // Open the picker menu (click the model-picker button).
+            await page.evaluate(`
+              (() => {
+                ${pickModelPickerScript()}
+                const picker = findModelPicker();
+                if (!picker) return { ok: false };
+                try { picker.click(); } catch (_) { return { ok: false }; }
+                return { ok: true };
+              })()
+            `);
+
+            // Wait for React to render the menu.
+            await page.wait(1.0);
+
+            // Read model entries from the open menu.
+            const raw = await page.evaluate(readMenuModelsScript());
             const unwrapped = unwrapBrowserBridgeEnvelope(raw);
             discoveredModels = Array.isArray(unwrapped) ? unwrapped : [];
+
+            // Click the thinking toggle to expand thinking options.
+            const toggleClicked = await page.evaluate(clickThinkingToggleScript());
+            if (toggleClicked) {
+                await page.wait(0.5);
+                const thinkingValues = await page.evaluate(extractThinkingScript());
+                if (Array.isArray(thinkingValues) && thinkingValues.length > 0) {
+                    for (const row of discoveredModels) {
+                        row.thinkingValues = thinkingValues;
+                    }
+                }
+            }
+
+            // Close the menu.
+            await page.evaluate(`(() => { try { document.body.click(); } catch (_) {} })()`);
         }
 
         // ── Model selection ──────────────────────────────────────────────
