@@ -1845,25 +1845,188 @@ export async function exportGeminiDeepResearchReport(page, timeoutSeconds = 120)
 // ── Thinking-level selection ─────────────────────────────────────────
 
 /**
- * Browser evaluate script that selects a Gemini thinking level by clicking
- * a visible toggle / radio / button whose text matches the requested value.
+ * Browser evaluate script that opens the Gemini model-picker menu.
+ * Returns { ok: true } on success, { ok: false } on failure.
+ */
+function openModelPickerForThinkingScript() {
+    return `
+    (() => {
+      const isVisible = (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.hidden || el.closest('[hidden]')) return false;
+        const ariaHidden = el.getAttribute('aria-hidden');
+        if (ariaHidden && ariaHidden.toLowerCase() === 'true') return false;
+        if (el.closest('[aria-hidden="true"]')) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (Number(style.opacity) === 0 || style.pointerEvents === 'none') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+      const VERSION_LABEL_RE = /\\d+\\.\\d+/;
+
+      const MODE_SELECTOR_PATTERNS = [
+        /模式选择器/i,
+        /mode[\\s-]*selector/i,
+        /model[\\s-]*selector/i,
+        /model[\\s-]*picker/i,
+        /选择模型/i,
+        /select[\\s-]+model/i,
+        /choose[\\s-]+model/i,
+        /switch[\\s-]+model/i,
+        /change[\\s-]+model/i,
+      ];
+
+      const MODEL_VARIANT_RE = /^(?:gemini\\s+)?(flash|lite|pro|ultra|nano|flash-lite|flash[\\s-]*thinking)$/i;
+
+      const findModelPicker = () => {
+        const buttons = Array.from(
+          document.querySelectorAll('button, [role="button"]')
+        ).filter(isVisible);
+
+        // Method 1: Detect model/mode selector via aria-label patterns.
+        for (const button of buttons) {
+          const aria = normalize(button.getAttribute('aria-label') || '');
+          for (const pattern of MODE_SELECTOR_PATTERNS) {
+            if (pattern.test(aria)) return button;
+          }
+        }
+
+        // Method 2: Detect buttons whose text contains a model-version pattern.
+        const versionCandidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
+          return VERSION_LABEL_RE.test(text) && text.length < 80;
+        });
+        versionCandidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        if (versionCandidates.length > 0) return versionCandidates[0];
+
+        // Method 3: Detect buttons showing a known model variant as their
+        // sole text (e.g. "Pro", "Flash", "Flash-Lite").
+        const variantCandidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '');
+          return MODEL_VARIANT_RE.test(text) && text.length < 30;
+        });
+        variantCandidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        if (variantCandidates.length > 0) return variantCandidates[0];
+
+        // Method 4: Fallback — look for any element with model-related attributes.
+        const attrEls = Array.from(
+          document.querySelectorAll('[data-model-selector], [aria-label*="model" i], [aria-label*="模式" i]')
+        ).filter(isVisible);
+        if (attrEls.length > 0) return attrEls[0];
+
+        return null;
+      };
+
+      const picker = findModelPicker();
+      if (!picker) return { ok: false, reason: 'Model picker not found' };
+
+      try {
+        picker.click();
+        return { ok: true };
+      } catch (_) {
+        return { ok: false, reason: 'Failed to click model picker' };
+      }
+    })()
+    `;
+}
+
+/**
+ * Browser evaluate script that clicks the "思考等级" / "Thinking level"
+ * toggle inside an already-open model-picker menu to expand thinking options.
+ * Returns true if the toggle was found and clicked.
+ */
+function clickThinkingToggleInMenuScript() {
+    return `
+    (() => {
+      const isVisible = (el) => {
+        if (!el) return false;
+        if (!(el instanceof HTMLElement) && !(el instanceof Element)) return false;
+        if (el.hidden || el.closest('[hidden]')) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const MENU_SELECTORS = [
+        '[role="menu"] [role="menuitem"]',
+        '[role="menu"] [role="menuitemradio"]',
+        '[role="listbox"] [role="option"]',
+        '[role="menu"] button',
+        '[role="listbox"] button',
+        '[role="menu"] li',
+        '[role="listbox"] li',
+        '[role="dialog"] [role="menuitem"]',
+        '[role="dialog"] [role="option"]',
+        '[aria-modal="true"] [role="menuitem"]',
+        '[aria-modal="true"] [role="option"]',
+        'gem-menu-item',
+        'GEM-MENU-ITEM',
+      ];
+
+      let menuItems = [];
+      for (const sel of MENU_SELECTORS) {
+        const items = Array.from(document.querySelectorAll(sel)).filter(isVisible);
+        if (items.length >= 2) { menuItems = items; break; }
+      }
+
+      if (menuItems.length === 0) {
+        const containers = Array.from(
+          document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"], [aria-modal="true"]')
+        ).filter(isVisible);
+        for (const container of containers) {
+          const children = Array.from(
+            container.querySelectorAll('button, [role="button"], li, [role="menuitem"], [role="option"], gem-menu-item, GEM-MENU-ITEM, :not(script):not(style)')
+          ).filter(isVisible);
+          if (children.length >= 2) { menuItems = children; break; }
+        }
+      }
+
+      const thinkingToggle = menuItems.find((item) => {
+        const text = (item.textContent || '').replace(/\\s+/g, ' ').trim();
+        return /思考等级|thinking level|thinking mode/i.test(text);
+      });
+
+      if (thinkingToggle) {
+        try { thinkingToggle.click(); } catch (_) { return false; }
+        return true;
+      }
+      return false;
+    })()
+    `;
+}
+
+/**
+ * Browser evaluate script that selects a specific thinking level from an
+ * already-open model-picker menu (after the thinking section has been
+ * expanded).  Closes the menu after selection (or on failure).
  *
  * @param {string} thinkingValue - 'standard' or 'extended'
- * @returns a function string for page.evaluate()
+ * @returns a function string for page.evaluate() that returns the matched
+ *          label text, or empty string on failure
  */
-function selectGeminiThinkingScript(thinkingValue) {
+function selectThinkingInMenuScript(thinkingValue) {
     const normalizedValue = String(thinkingValue || '').trim().toLowerCase();
     if (!normalizedValue) return '(() => "")';
-    const escapedValue = JSON.stringify(normalizedValue);
     const labelMap = JSON.stringify({
         standard: ['standard', '标准', '標準'],
         extended: ['extended', '扩展', '擴展', '拡張'],
     });
     return `
     (() => {
-      const requested = ${escapedValue};
       const LABEL_MAP = ${labelMap};
-      const candidateLabels = LABEL_MAP[requested] || [requested];
+      const candidateLabels = LABEL_MAP['${normalizedValue}'] || ['${normalizedValue}'];
 
       const isVisible = (el) => {
         if (!(el instanceof HTMLElement)) return false;
@@ -1894,30 +2057,40 @@ function selectGeminiThinkingScript(thinkingValue) {
         return candidateLabels.some((label) => combined.includes(label));
       };
 
-      // Look for visible thinking controls: buttons, radios, switches, toggles
+      // Search inside visible menu containers first.
+      const containers = Array.from(
+        document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"], [aria-modal="true"]')
+      ).filter(isVisible);
+
       const SELECTORS = [
-        'button',
-        '[role="button"]',
-        '[role="radio"]',
-        '[role="menuitemradio"]',
-        '[role="switch"]',
-        '[role="option"]',
-        'label',
-        'input[type="radio"]',
+        'button', '[role="button"]', '[role="menuitem"]', '[role="menuitemradio"]',
+        '[role="option"]', '[role="radio"]', '[role="switch"]', 'li',
       ];
 
-      const candidates = [];
-      for (const sel of SELECTORS) {
-        const nodes = Array.from(document.querySelectorAll(sel)).filter(isVisible);
-        for (const node of nodes) {
-          if (matchesThinking(node)) candidates.push(node);
+      let candidates = [];
+      for (const container of containers) {
+        for (const sel of SELECTORS) {
+          const nodes = Array.from(container.querySelectorAll(sel))
+            .filter((node) => isVisible(node) && matchesThinking(node));
+          candidates.push(...nodes);
         }
       }
 
-      if (candidates.length === 0) return '';
+      // Fallback: search the entire page.
+      if (candidates.length === 0) {
+        for (const sel of SELECTORS) {
+          const nodes = Array.from(document.querySelectorAll(sel))
+            .filter((node) => isVisible(node) && matchesThinking(node));
+          candidates.push(...nodes);
+        }
+      }
 
-      // Prefer the candidate whose text most closely matches the requested
-      // value (exact match wins over substring).
+      if (candidates.length === 0) {
+        try { document.body.click(); } catch (_) {}
+        return '';
+      }
+
+      // Prefer exact match over substring.
       candidates.sort((a, b) => {
         const aText = normalize(textOf(a));
         const bText = normalize(textOf(b));
@@ -1929,32 +2102,19 @@ function selectGeminiThinkingScript(thinkingValue) {
       });
 
       const target = candidates[0];
+      let matchedLabel = '';
       try {
-        target.scrollIntoView({ block: 'center', inline: 'center' });
-      } catch (_) {}
-      try {
-        target.focus({ preventScroll: true });
-      } catch (_) {}
-
-      // Dispatch a full click sequence.
-      try {
-        const rect = target.getBoundingClientRect();
-        const init = {
-          bubbles: true, cancelable: true, button: 0, buttons: 1,
-          clientX: Math.round(rect.left + rect.width / 2),
-          clientY: Math.round(rect.top + rect.height / 2),
-        };
-        target.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerType: 'mouse' }));
-        target.dispatchEvent(new MouseEvent('mousedown', init));
-        target.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerType: 'mouse' }));
-        target.dispatchEvent(new MouseEvent('mouseup', init));
-        target.dispatchEvent(new MouseEvent('click', init));
+        target.click();
+        matchedLabel = (target.textContent || '').trim();
       } catch (_) {
-        try { target.click(); } catch (__) { return ''; }
+        try { document.body.click(); } catch (_) {}
+        return '';
       }
 
-      // Return the matched label text for diagnostics.
-      return (target.textContent || '').trim();
+      // Close the menu after successful selection.
+      try { document.body.click(); } catch (_) {}
+
+      return matchedLabel;
     })()
     `;
 }
@@ -1962,17 +2122,44 @@ function selectGeminiThinkingScript(thinkingValue) {
 /**
  * Select a Gemini thinking level in the web UI.
  *
+ * Multi-step approach matching modelsCommand.func:
+ *  1. Open the model-picker menu.
+ *  2. Wait for React to render the menu.
+ *  3. Click the "思考等级"/"Thinking level" toggle to expand thinking options.
+ *  4. Wait for the expanded items to render.
+ *  5. Select the requested thinking level.
+ *  6. Close the menu.
+ *
  * @param {object} page - Puppeteer page object
  * @param {string} thinkingValue - 'standard' or 'extended'
  * @returns {Promise<string>} matched label text, or empty string on failure
  */
 export async function selectGeminiThinking(page, thinkingValue) {
     await ensureGeminiPage(page);
-    const matched = await page.evaluate(selectGeminiThinkingScript(thinkingValue)).catch(() => '');
-    if (typeof matched === 'string' && matched) {
+
+    // Step 1: Open the picker menu.
+    const pickerResult = await page.evaluate(openModelPickerForThinkingScript()).catch(() => null);
+    if (!pickerResult || !pickerResult.ok) return '';
+
+    // Step 2: Wait for React to render the menu.
+    await page.wait(0.8);
+
+    // Step 3: Click the thinking toggle to expand thinking options.
+    const toggleClicked = await page.evaluate(clickThinkingToggleInMenuScript()).catch(() => false);
+
+    if (toggleClicked) {
+        // Step 4: Wait for the expanded thinking items to render.
         await page.wait(0.5);
+    }
+
+    // Step 5: Select the requested thinking level (also closes the menu).
+    const matched = await page.evaluate(selectThinkingInMenuScript(thinkingValue)).catch(() => '');
+
+    if (typeof matched === 'string' && matched) {
+        await page.wait(0.3);
         return matched;
     }
+
     return '';
 }
 
@@ -2007,26 +2194,61 @@ function getCurrentGeminiModelScript() {
 
       const VERSION_LABEL_RE = /\\d+\\.\\d+/;
 
+      const MODE_SELECTOR_PATTERNS = [
+        /模式选择器/i,
+        /mode[\\s-]*selector/i,
+        /model[\\s-]*selector/i,
+        /model[\\s-]*picker/i,
+        /选择模型/i,
+        /select[\\s-]+model/i,
+        /choose[\\s-]+model/i,
+        /switch[\\s-]+model/i,
+        /change[\\s-]+model/i,
+      ];
+
+      const MODEL_VARIANT_RE = /^(?:gemini\\s+)?(flash|lite|pro|ultra|nano|flash-lite|flash[\\s-]*thinking)$/i;
+
       const findModelPicker = () => {
         const buttons = Array.from(
           document.querySelectorAll('button, [role="button"]')
         ).filter(isVisible);
 
-        const candidates = buttons.filter((b) => {
+        // Method 1: Detect model/mode selector via aria-label patterns.
+        for (const button of buttons) {
+          const aria = normalize(button.getAttribute('aria-label') || '');
+          for (const pattern of MODE_SELECTOR_PATTERNS) {
+            if (pattern.test(aria)) return button;
+          }
+        }
+
+        // Method 2: Detect buttons whose text contains a model-version pattern.
+        const versionCandidates = buttons.filter((b) => {
           const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
           return VERSION_LABEL_RE.test(text) && text.length < 80;
         });
-
-        candidates.sort((a, b) => {
+        versionCandidates.sort((a, b) => {
           const aRect = a.getBoundingClientRect();
           const bRect = b.getBoundingClientRect();
           return aRect.top - bRect.top || aRect.left - bRect.left;
         });
+        if (versionCandidates.length > 0) return versionCandidates[0];
 
-        if (candidates.length > 0) return candidates[0];
+        // Method 3: Detect buttons showing a known model variant as their
+        // sole text (e.g. "Pro", "Flash", "Flash-Lite").
+        const variantCandidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '');
+          return MODEL_VARIANT_RE.test(text) && text.length < 30;
+        });
+        variantCandidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        if (variantCandidates.length > 0) return variantCandidates[0];
 
+        // Method 4: Fallback — look for any element with model-related attributes.
         const attrEls = Array.from(
-          document.querySelectorAll('[data-model-selector], [aria-label*="model" i]')
+          document.querySelectorAll('[data-model-selector], [aria-label*="model" i], [aria-label*="模式" i]')
         ).filter(isVisible);
         if (attrEls.length > 0) return attrEls[0];
 
@@ -2092,7 +2314,10 @@ export const __test__ = {
     expandGeminiRecentScript,
     submitComposerScript,
     insertComposerTextFallbackScript,
-    selectGeminiThinkingScript,
+    openModelPickerForThinkingScript,
+    clickThinkingToggleInMenuScript,
+    selectThinkingInMenuScript,
+    selectGeminiModelScript,
     getCurrentGeminiModelScript,
 };
 export async function getGeminiVisibleImageUrls(page) {
@@ -2347,22 +2572,68 @@ export function selectGeminiModelScript(modelId) {
         return '';
       };
 
-      // ── Find model picker button ──
+      // ── Find model picker button (full 4-method strategy from models.js) ──
       const VERSION_LABEL_RE = /\\d+\\.\\d+/;
+
+      const MODE_SELECTOR_PATTERNS = [
+        /模式选择器/i,
+        /mode[\\s-]*selector/i,
+        /model[\\s-]*selector/i,
+        /model[\\s-]*picker/i,
+        /选择模型/i,
+        /select[\\s-]+model/i,
+        /choose[\\s-]+model/i,
+        /switch[\\s-]+model/i,
+        /change[\\s-]+model/i,
+      ];
+
+      const MODEL_VARIANT_RE = /^(?:gemini\\s+)?(flash|lite|pro|ultra|nano|flash-lite|flash[\\s-]*thinking)$/i;
+
       const findModelPicker = () => {
         const buttons = Array.from(
           document.querySelectorAll('button, [role="button"]')
         ).filter(isVisible);
-        const candidates = buttons.filter((b) => {
+
+        // Method 1: Detect model/mode selector via aria-label patterns.
+        for (const button of buttons) {
+          const aria = normalize(button.getAttribute('aria-label') || '');
+          for (const pattern of MODE_SELECTOR_PATTERNS) {
+            if (pattern.test(aria)) return button;
+          }
+        }
+
+        // Method 2: Detect buttons whose text contains a model-version pattern.
+        const versionCandidates = buttons.filter((b) => {
           const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
           return VERSION_LABEL_RE.test(text) && text.length < 80;
         });
-        candidates.sort((a, b) => {
+        versionCandidates.sort((a, b) => {
           const aRect = a.getBoundingClientRect();
           const bRect = b.getBoundingClientRect();
           return aRect.top - bRect.top || aRect.left - bRect.left;
         });
-        return candidates.length > 0 ? candidates[0] : null;
+        if (versionCandidates.length > 0) return versionCandidates[0];
+
+        // Method 3: Detect buttons showing a known model variant as their
+        // sole text (e.g. "Pro", "Flash", "Flash-Lite").
+        const variantCandidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '');
+          return MODEL_VARIANT_RE.test(text) && text.length < 30;
+        });
+        variantCandidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        if (variantCandidates.length > 0) return variantCandidates[0];
+
+        // Method 4: Fallback — look for any element with model-related attributes.
+        const attrEls = Array.from(
+          document.querySelectorAll('[data-model-selector], [aria-label*="model" i], [aria-label*="模式" i]')
+        ).filter(isVisible);
+        if (attrEls.length > 0) return attrEls[0];
+
+        return null;
       };
 
       const picker = findModelPicker();
