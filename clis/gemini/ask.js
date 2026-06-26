@@ -1,6 +1,16 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { ArgumentError } from '@jackwener/opencli/errors';
-import { GEMINI_DOMAIN, readGeminiSnapshot, sendGeminiMessage, startNewGeminiChat, waitForGeminiResponse, waitForGeminiSubmission } from './utils.js';
+import {
+  GEMINI_DOMAIN,
+  ensureGeminiPage,
+  readGeminiSnapshot,
+  selectGeminiModel,
+  sendGeminiMessage,
+  startNewGeminiChat,
+  waitForGeminiResponse,
+  waitForGeminiSubmission,
+} from './utils.js';
+import { discoverModelsScript } from './models.js';
 function normalizeBooleanFlag(value) {
     if (typeof value === 'boolean')
         return value;
@@ -8,6 +18,41 @@ function normalizeBooleanFlag(value) {
     return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
 }
 const NO_RESPONSE_PREFIX = '[NO RESPONSE]';
+
+/**
+ * Validate a --model value for gemini ask.
+ * Throws ArgumentError for short aliases or invalid formats.
+ */
+function validateAskModelValue(value) {
+    if (!value) {
+        throw new ArgumentError(
+            '--model requires a canonical model id (e.g. "2.5-flash"). ' +
+            'Use "opencli gemini models" to list available values.'
+        );
+    }
+    // Reject short aliases like "pro", "flash", "flash-lite" that lack a version number.
+    if (!/\d+\.\d+/.test(value)) {
+        throw new ArgumentError(
+            '--model "' + value + '" is not accepted. ' +
+            'Short aliases like "pro", "flash", or "flash-lite" are not supported. ' +
+            'Use a canonical model id (e.g. "2.5-flash"). ' +
+            'Use "opencli gemini models" to list available values.'
+        );
+    }
+    // Must match canonical format: X.Y-variant
+    if (!/^\d+\.\d+-[a-z][a-z-]*$/.test(value)) {
+        throw new ArgumentError(
+            '--model "' + value + '" is not a valid canonical model id. ' +
+            'Expected format: version-variant (e.g. "2.5-flash", "3.1-pro"). ' +
+            'Use "opencli gemini models" to list available values.'
+        );
+    }
+}
+
+export const __test__ = {
+    validateAskModelValue,
+};
+
 export const askCommand = cli({
     site: 'gemini',
     name: 'ask',
@@ -21,6 +66,7 @@ export const askCommand = cli({
     defaultFormat: 'plain',
     args: [
         { name: 'prompt', required: true, positional: true, help: 'Prompt to send' },
+        { name: 'model', type: 'string', required: false, help: 'Gemini model to use (e.g. "2.5-flash"). Use "opencli gemini models" to list available values.' },
         { name: 'timeout', type: 'int', required: false, help: 'Max seconds to wait (default: 60)', default: 60 },
         { name: 'new', required: false, help: 'Start a new chat first (true/false, default: false)', default: 'false' },
     ],
@@ -31,6 +77,32 @@ export const askCommand = cli({
         if (!Number.isInteger(timeout) || timeout < 1) {
             throw new ArgumentError('--timeout must be a positive integer (seconds)');
         }
+
+        // ── Model selection ──────────────────────────────────────────────
+        if (kwargs.model !== undefined && kwargs.model !== null) {
+            const modelValue = String(kwargs.model).trim();
+            validateAskModelValue(modelValue);
+            await ensureGeminiPage(page);
+            const raw = await page.evaluate(discoverModelsScript());
+            const availableModels = (typeof raw === 'object' && raw !== null && 'data' in raw && 'session' in raw
+                ? raw.data
+                : raw) || [];
+            if (!Array.isArray(availableModels)) {
+                throw new ArgumentError(
+                    'Failed to discover Gemini models. Use "opencli gemini models" to see available values.'
+                );
+            }
+            const availableIds = availableModels.map((m) => m?.model).filter(Boolean);
+            if (!availableIds.includes(modelValue)) {
+                throw new ArgumentError(
+                    'Unknown model "' + modelValue + '". ' +
+                    'Available models: ' + availableIds.join(', ') + '. ' +
+                    'Use "opencli gemini models" to see available values.'
+                );
+            }
+            await selectGeminiModel(page, modelValue);
+        }
+
         const startFresh = normalizeBooleanFlag(kwargs.new);
         if (startFresh)
             await startNewGeminiChat(page);

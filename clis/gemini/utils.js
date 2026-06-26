@@ -2054,3 +2054,172 @@ export async function waitForGeminiResponse(page, baseline, promptText, timeoutS
     }
     return '';
 }
+
+/**
+ * Evaluate script that selects a specific Gemini model from the web UI
+ * model picker by canonical model id (e.g. "2.5-flash").
+ *
+ * Returns { ok: true } on success, or { ok: false, reason: "..." }
+ * when the picker or model item could not be found / clicked.
+ */
+export function selectGeminiModelScript(modelId) {
+    return `
+    (() => {
+      const targetModelId = ${JSON.stringify(modelId)};
+      if (!targetModelId) return { ok: false, reason: 'No model id provided' };
+
+      const isVisible = (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.hidden || el.closest('[hidden]')) return false;
+        const ariaHidden = el.getAttribute('aria-hidden');
+        if (ariaHidden && ariaHidden.toLowerCase() === 'true') return false;
+        if (el.closest('[aria-hidden="true"]')) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (Number(style.opacity) === 0 || style.pointerEvents === 'none') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+
+      // ── Canonical model-id helper (same logic as discovery script) ──
+      const canonicalModelId = (raw) => {
+        const text = normalize(raw);
+        if (!text) return '';
+        const cleaned = text.replace(/^[^a-z0-9]+/i, '').trim();
+        const versionRe = /^((?:gemini[\\s-]*)?(\\d+(?:\\.\\d+)?)(?:[\\s-]+(flash|pro|lite|ultra|nano|thinking|experimental))(?:[\\s-]*(flash|pro|lite|ultra|nano|thinking|experimental))?)/i;
+        const match = cleaned.match(versionRe);
+        if (match) {
+          const version = match[2];
+          let variant = (match[3] || '').toLowerCase();
+          const extra = (match[4] || '').toLowerCase();
+          if (extra) variant = variant + '-' + extra;
+          return version + '-' + variant;
+        }
+        const fallbackRe = /(\\d+(?:\\.\\d+)?)\\s*(flash|pro|lite|ultra|nano|thinking|experimental)/i;
+        const fallbackMatch = cleaned.match(fallbackRe);
+        if (fallbackMatch) {
+          return fallbackMatch[1] + '-' + fallbackMatch[2].toLowerCase();
+        }
+        if (/\\d+(?:\\.\\d+)?/.test(cleaned) && cleaned.length < 60) {
+          return cleaned.replace(/\\s+/g, '-').replace(/[^a-z0-9.-]/g, '');
+        }
+        return '';
+      };
+
+      // ── Find model picker button ──
+      const VERSION_LABEL_RE = /\\d+\\.\\d+/;
+      const findModelPicker = () => {
+        const buttons = Array.from(
+          document.querySelectorAll('button, [role="button"]')
+        ).filter(isVisible);
+        const candidates = buttons.filter((b) => {
+          const text = normalize(b.textContent || '') || normalize(b.getAttribute('aria-label') || '');
+          return VERSION_LABEL_RE.test(text) && text.length < 80;
+        });
+        candidates.sort((a, b) => {
+          const aRect = a.getBoundingClientRect();
+          const bRect = b.getBoundingClientRect();
+          return aRect.top - bRect.top || aRect.left - bRect.left;
+        });
+        return candidates.length > 0 ? candidates[0] : null;
+      };
+
+      const picker = findModelPicker();
+      if (!picker) return { ok: false, reason: 'Model picker button not found' };
+
+      // ── Open the picker menu ──
+      try {
+        const rect = picker.getBoundingClientRect();
+        const init = {
+          bubbles: true, cancelable: true, button: 0, buttons: 1,
+          clientX: Math.round(rect.left + rect.width / 2),
+          clientY: Math.round(rect.top + rect.height / 2),
+        };
+        picker.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerType: 'mouse' }));
+        picker.dispatchEvent(new MouseEvent('mousedown', init));
+        picker.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerType: 'mouse' }));
+        picker.dispatchEvent(new MouseEvent('mouseup', init));
+        picker.dispatchEvent(new MouseEvent('click', init));
+      } catch (_) {
+        return { ok: false, reason: 'Failed to open model picker menu' };
+      }
+
+      // ── Find visible menu items ──
+      const MENU_SELECTORS = [
+        '[role="menu"] [role="menuitem"]',
+        '[role="menu"] [role="menuitemradio"]',
+        '[role="listbox"] [role="option"]',
+        '[role="menu"] button',
+        '[role="listbox"] button',
+        '[role="menu"] li',
+        '[role="listbox"] li',
+        '[role="dialog"] [role="menuitem"]',
+        '[role="dialog"] [role="option"]',
+        '[aria-modal="true"] [role="menuitem"]',
+        '[aria-modal="true"] [role="option"]',
+      ];
+
+      let menuItems = [];
+      for (const sel of MENU_SELECTORS) {
+        const items = Array.from(document.querySelectorAll(sel)).filter(isVisible);
+        if (items.length >= 2) { menuItems = items; break; }
+      }
+
+      if (menuItems.length === 0) {
+        const containers = Array.from(
+          document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"], [aria-modal="true"]')
+        ).filter(isVisible);
+        for (const container of containers) {
+          const children = Array.from(
+            container.querySelectorAll('button, [role="button"], li, [role="menuitem"], [role="option"]')
+          ).filter(isVisible);
+          if (children.length >= 2) { menuItems = children; break; }
+        }
+      }
+
+      // ── Find and click the matching menu item ──
+      let matched = null;
+      for (const item of menuItems) {
+        const id = canonicalModelId(item.textContent || '');
+        if (id === targetModelId) {
+          matched = item;
+          break;
+        }
+      }
+
+      if (!matched) {
+        // Close the menu before returning.
+        try { document.body.click(); } catch (_) {}
+        return { ok: false, reason: 'Model "' + targetModelId + '" not found in picker menu' };
+      }
+
+      try {
+        matched.click();
+      } catch (_) {
+        try { document.body.click(); } catch (_) {}
+        return { ok: false, reason: 'Failed to click model menu item' };
+      }
+
+      return { ok: true };
+    })()
+    `;
+}
+
+/**
+ * Select a Gemini model by canonical id (e.g. "2.5-flash") in the
+ * web UI model picker.  Throws CommandExecutionError on failure.
+ */
+export async function selectGeminiModel(page, modelId) {
+    await ensureGeminiPage(page);
+    const raw = await page.evaluate(selectGeminiModelScript(modelId));
+    const result = typeof raw === 'object' && raw !== null && 'data' in raw && 'session' in raw
+        ? raw.data
+        : raw;
+    if (!result || !result.ok) {
+        throw new CommandExecutionError(
+            result?.reason || 'Failed to select Gemini model "' + modelId + '"'
+        );
+    }
+}

@@ -7,7 +7,7 @@
 | Command | Description |
 |---------|-------------|
 | `opencli gemini new` | Start a new Gemini web chat |
-| `opencli gemini ask <prompt>` | Send a prompt and return only the assistant reply |
+| `opencli gemini ask <prompt> [--model <value>]` | Send a prompt and return only the assistant reply |
 | `opencli gemini image <prompt>` | Generate images in Gemini and optionally save them locally |
 | `opencli gemini models` | List available Gemini models and their supported thinking levels |
 | `opencli gemini deep-research <prompt>` | Start a Gemini Deep Research run and confirm it |
@@ -25,6 +25,9 @@ opencli gemini new
 
 # Ask Gemini and return minimal plain-text output
 opencli gemini ask "Reply with exactly: HELLO"
+
+# Ask with a specific model selected
+opencli gemini ask "Explain quantum computing in one sentence" --model 2.5-flash
 
 # Ask in a new chat and wait longer
 opencli gemini ask "Summarize this design in 3 bullets" --new true --timeout 90
@@ -52,6 +55,7 @@ opencli gemini models -f json
 | Option | Description |
 |--------|-------------|
 | `prompt` | Prompt to send (required positional argument) |
+| `--model` | Gemini model to use (e.g. `2.5-flash`, `2.5-pro`). Use `opencli gemini models` to list available values. |
 | `--timeout` | Max seconds to wait for a reply (default: `60`) |
 | `--new` | Start a new chat before sending (default: `false`) |
 
@@ -79,6 +83,9 @@ opencli gemini models -f json
 
 ## Behavior
 
+- `ask --model <value>` selects the requested model before reading the page state and sending the prompt. The selected model remains visible in the Gemini web UI after the command completes. Short aliases like `pro` or `flash` are rejected—use canonical model IDs from `opencli gemini models`.
+- When `--model` is omitted, `ask` does not change the current model.
+- All other Gemini commands (`image`, `deep-research`, etc.) are unaffected and do not accept `--model`.
 - `ask` uses plain minimal output and returns only the assistant response text prefixed with `💬`.
 - `image` also uses plain output and prints `status / file / link` instead of a table.
 - `image` always starts from a fresh Gemini chat before sending the prompt.
