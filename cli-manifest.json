@@ -13681,6 +13681,13 @@
         "default": "false",
         "required": false,
         "help": "Start a new chat first (true/false, default: false)"
+      },
+      {
+        "name": "thinking",
+        "type": "str",
+        "default": null,
+        "required": false,
+        "help": "Thinking level: standard or extended (omitted = leave unchanged)"
       }
     ],
     "columns": [

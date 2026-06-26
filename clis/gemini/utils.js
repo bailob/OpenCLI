@@ -1842,6 +1842,140 @@ export async function exportGeminiDeepResearchReport(page, timeoutSeconds = 120)
         : await getCurrentGeminiUrl(page);
     return pickGeminiDeepResearchExportUrl(urls, currentUrl);
 }
+// ── Thinking-level selection ─────────────────────────────────────────
+
+/**
+ * Browser evaluate script that selects a Gemini thinking level by clicking
+ * a visible toggle / radio / button whose text matches the requested value.
+ *
+ * @param {string} thinkingValue - 'standard' or 'extended'
+ * @returns a function string for page.evaluate()
+ */
+function selectGeminiThinkingScript(thinkingValue) {
+    const normalizedValue = String(thinkingValue || '').trim().toLowerCase();
+    if (!normalizedValue) return '(() => "")';
+    const escapedValue = JSON.stringify(normalizedValue);
+    const labelMap = JSON.stringify({
+        standard: ['standard', '标准', '標準'],
+        extended: ['extended', '扩展', '擴展', '拡張'],
+    });
+    return `
+    (() => {
+      const requested = ${escapedValue};
+      const LABEL_MAP = ${labelMap};
+      const candidateLabels = LABEL_MAP[requested] || [requested];
+
+      const isVisible = (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.hidden || el.closest('[hidden]')) return false;
+        const ariaHidden = el.getAttribute('aria-hidden');
+        if (ariaHidden && ariaHidden.toLowerCase() === 'true') return false;
+        if (el.closest('[aria-hidden="true"]')) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (Number(style.opacity) === 0 || style.pointerEvents === 'none') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+
+      const textOf = (node) => [
+        node?.textContent || '',
+        node instanceof HTMLElement ? (node.innerText || '') : '',
+        node?.getAttribute?.('aria-label') || '',
+        node?.getAttribute?.('title') || '',
+        node?.getAttribute?.('data-tooltip') || '',
+      ].join(' ');
+
+      const matchesThinking = (node) => {
+        const combined = normalize(textOf(node));
+        if (!combined) return false;
+        return candidateLabels.some((label) => combined.includes(label));
+      };
+
+      // Look for visible thinking controls: buttons, radios, switches, toggles
+      const SELECTORS = [
+        'button',
+        '[role="button"]',
+        '[role="radio"]',
+        '[role="menuitemradio"]',
+        '[role="switch"]',
+        '[role="option"]',
+        'label',
+        'input[type="radio"]',
+      ];
+
+      const candidates = [];
+      for (const sel of SELECTORS) {
+        const nodes = Array.from(document.querySelectorAll(sel)).filter(isVisible);
+        for (const node of nodes) {
+          if (matchesThinking(node)) candidates.push(node);
+        }
+      }
+
+      if (candidates.length === 0) return '';
+
+      // Prefer the candidate whose text most closely matches the requested
+      // value (exact match wins over substring).
+      candidates.sort((a, b) => {
+        const aText = normalize(textOf(a));
+        const bText = normalize(textOf(b));
+        const aExact = candidateLabels.some((l) => aText === l);
+        const bExact = candidateLabels.some((l) => bText === l);
+        if (aExact && !bExact) return -1;
+        if (!aExact && bExact) return 1;
+        return 0;
+      });
+
+      const target = candidates[0];
+      try {
+        target.scrollIntoView({ block: 'center', inline: 'center' });
+      } catch (_) {}
+      try {
+        target.focus({ preventScroll: true });
+      } catch (_) {}
+
+      // Dispatch a full click sequence.
+      try {
+        const rect = target.getBoundingClientRect();
+        const init = {
+          bubbles: true, cancelable: true, button: 0, buttons: 1,
+          clientX: Math.round(rect.left + rect.width / 2),
+          clientY: Math.round(rect.top + rect.height / 2),
+        };
+        target.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerType: 'mouse' }));
+        target.dispatchEvent(new MouseEvent('mousedown', init));
+        target.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerType: 'mouse' }));
+        target.dispatchEvent(new MouseEvent('mouseup', init));
+        target.dispatchEvent(new MouseEvent('click', init));
+      } catch (_) {
+        try { target.click(); } catch (__) { return ''; }
+      }
+
+      // Return the matched label text for diagnostics.
+      return (target.textContent || '').trim();
+    })()
+    `;
+}
+
+/**
+ * Select a Gemini thinking level in the web UI.
+ *
+ * @param {object} page - Puppeteer page object
+ * @param {string} thinkingValue - 'standard' or 'extended'
+ * @returns {Promise<string>} matched label text, or empty string on failure
+ */
+export async function selectGeminiThinking(page, thinkingValue) {
+    await ensureGeminiPage(page);
+    const matched = await page.evaluate(selectGeminiThinkingScript(thinkingValue)).catch(() => '');
+    if (typeof matched === 'string' && matched) {
+        await page.wait(0.5);
+        return matched;
+    }
+    return '';
+}
+
 export const __test__ = {
     GEMINI_COMPOSER_SELECTORS,
     GEMINI_COMPOSER_MARKER_ATTR,
@@ -1855,6 +1989,7 @@ export const __test__ = {
     expandGeminiRecentScript,
     submitComposerScript,
     insertComposerTextFallbackScript,
+    selectGeminiThinkingScript,
 };
 export async function getGeminiVisibleImageUrls(page) {
     await ensureGeminiPage(page);

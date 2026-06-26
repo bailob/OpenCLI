@@ -5,6 +5,7 @@ import {
   ensureGeminiPage,
   readGeminiSnapshot,
   selectGeminiModel,
+  selectGeminiThinking,
   sendGeminiMessage,
   startNewGeminiChat,
   waitForGeminiResponse,
@@ -69,6 +70,7 @@ export const askCommand = cli({
         { name: 'model', type: 'string', required: false, help: 'Gemini model to use (e.g. "2.5-flash"). Use "opencli gemini models" to list available values.' },
         { name: 'timeout', type: 'int', required: false, help: 'Max seconds to wait (default: 60)', default: 60 },
         { name: 'new', required: false, help: 'Start a new chat first (true/false, default: false)', default: 'false' },
+        { name: 'thinking', required: false, help: 'Thinking level: standard or extended (omitted = leave unchanged)', default: null },
     ],
     columns: ['response'],
     func: async (page, kwargs) => {
@@ -106,6 +108,43 @@ export const askCommand = cli({
         const startFresh = normalizeBooleanFlag(kwargs.new);
         if (startFresh)
             await startNewGeminiChat(page);
+
+        // ── Thinking validation and selection ──────────────────────────
+        if (kwargs.thinking != null) {
+            const thinkingRaw = String(kwargs.thinking ?? '').trim();
+            const thinkingValue = thinkingRaw.toLowerCase();
+
+            if (thinkingValue !== 'standard' && thinkingValue !== 'extended') {
+                throw new ArgumentError(
+                    `--thinking must be 'standard' or 'extended', got '${thinkingRaw}'`,
+                    'Run `opencli gemini models` to see available thinking levels.',
+                );
+            }
+
+            // Validate against discovered thinking values.
+            const discoveredRaw = await page.evaluate(discoverModelsScript());
+            const discovered = Array.isArray(discoveredRaw) ? discoveredRaw : [];
+            const availableThinking = new Set();
+            for (const entry of discovered) {
+                if (entry && Array.isArray(entry.thinkingValues)) {
+                    for (const tv of entry.thinkingValues) {
+                        if (typeof tv === 'string') availableThinking.add(tv);
+                    }
+                }
+            }
+
+            if (availableThinking.size > 0 && !availableThinking.has(thinkingValue)) {
+                const availableList = [...availableThinking].sort().join(', ');
+                throw new ArgumentError(
+                    `--thinking '${thinkingValue}' is not currently available`,
+                    `Available thinking values: ${availableList}. Run \`opencli gemini models\` for details.`,
+                );
+            }
+
+            // Select the requested thinking level before snapshot.
+            await selectGeminiThinking(page, thinkingValue);
+        }
+
         const before = await readGeminiSnapshot(page);
         await sendGeminiMessage(page, prompt);
         const submissionStartedAt = Date.now();
