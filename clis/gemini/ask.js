@@ -1,5 +1,5 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
-import { ArgumentError } from '@jackwener/opencli/errors';
+import { ArgumentError, CommandExecutionError } from '@jackwener/opencli/errors';
 import {
   GEMINI_DOMAIN,
   ensureGeminiPage,
@@ -26,10 +26,24 @@ const NO_RESPONSE_PREFIX = '[NO RESPONSE]';
  * Throws ArgumentError for short aliases or invalid formats.
  */
 function unwrapBrowserBridgeEnvelope(value) {
-    if (value && typeof value === 'object' && 'data' in value && 'session' in value) {
-        return value.data;
+    if (value && typeof value === 'object' && !Array.isArray(value) && 'session' in value) {
+        if ('data' in value) return value.data;
+        throw new CommandExecutionError('Gemini model discovery returned a malformed Browser Bridge envelope');
     }
     return value;
+}
+
+function requireDiscoveredModels(value) {
+    const unwrapped = unwrapBrowserBridgeEnvelope(value);
+    if (!Array.isArray(unwrapped)) {
+        throw new CommandExecutionError('Gemini model discovery returned a malformed result');
+    }
+    for (const row of unwrapped) {
+        if (!row || typeof row.model !== 'string' || !Array.isArray(row.thinkingValues)) {
+            throw new CommandExecutionError('Gemini model discovery returned a malformed row');
+        }
+    }
+    return unwrapped;
 }
 
 function validateAskModelValue(value) {
@@ -121,23 +135,28 @@ export const askCommand = cli({
             await ensureGeminiPage(page);
 
             // Open the picker menu (click the model-picker button).
-            await page.evaluate(`
+            const pickerRaw = await page.evaluate(`
               (() => {
                 ${pickModelPickerScript()}
                 const picker = findModelPicker();
-                if (!picker) return { ok: false };
-                try { picker.click(); } catch (_) { return { ok: false }; }
+                if (!picker) return { ok: false, reason: 'Gemini model picker button was not found' };
+                try { picker.click(); } catch (_) { return { ok: false, reason: 'Failed to click Gemini model picker button' }; }
                 return { ok: true };
               })()
             `);
+            const pickerResult = unwrapBrowserBridgeEnvelope(pickerRaw);
+            if (!pickerResult || typeof pickerResult !== 'object' || !pickerResult.ok) {
+                throw new CommandExecutionError(
+                    pickerResult?.reason || 'Failed to open Gemini model picker for model discovery'
+                );
+            }
 
             // Wait for React to render the menu.
             await page.wait(1.0);
 
             // Read model entries from the open menu.
             const raw = await page.evaluate(readMenuModelsScript());
-            const unwrapped = unwrapBrowserBridgeEnvelope(raw);
-            discoveredModels = Array.isArray(unwrapped) ? unwrapped : [];
+            discoveredModels = requireDiscoveredModels(raw);
 
             // Close the menu. Thinking support is intentionally not copied from
             // the currently-visible UI into every model row: Gemini exposes
@@ -150,8 +169,8 @@ export const askCommand = cli({
         if (hasModel) {
             const availableModels = discoveredModels || [];
             if (!Array.isArray(availableModels) || availableModels.length === 0) {
-                throw new ArgumentError(
-                    'Failed to discover Gemini models. Use "opencli gemini models" to see available values.'
+                throw new CommandExecutionError(
+                    'Gemini model discovery returned no selectable models. Gemini Web may have changed its model selector UI.'
                 );
             }
             const availableIds = availableModels.map((m) => m?.model).filter(Boolean);

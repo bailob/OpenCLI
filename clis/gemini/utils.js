@@ -2676,4 +2676,14 @@ export async function selectGeminiModel(page, modelId) {
             result?.reason || 'Failed to select Gemini model "' + modelId + '"'
         );
     }
+
+    await page.wait(0.5);
+    const selectedModelId = await getCurrentGeminiModel(page);
+    if (selectedModelId !== modelId) {
+        throw new CommandExecutionError(
+            selectedModelId
+                ? `Gemini model selection read-back returned "${selectedModelId}", expected "${modelId}"`
+                : `Gemini model selection did not expose selected model "${modelId}" after click`
+        );
+    }
 }

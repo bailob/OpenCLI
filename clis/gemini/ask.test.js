@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ArgumentError } from '@jackwener/opencli/errors';
+import { ArgumentError, CommandExecutionError } from '@jackwener/opencli/errors';
 
 const baseline = {
     turns: [{ Role: 'Assistant', Text: '旧回答' }],
@@ -502,7 +502,22 @@ describe('gemini ask orchestration', () => {
 
         await expect(
             askCommand.func(page, { prompt: 'hello', model: '2.5-flash', timeout: 10, new: 'false' })
-        ).rejects.toBeInstanceOf(ArgumentError);
+        ).rejects.toBeInstanceOf(CommandExecutionError);
+    });
+
+    it('typed-fails malformed Browser Bridge envelopes during model discovery', async () => {
+        const page = createPageMock();
+        mocks.ensureGeminiPage.mockResolvedValue(undefined);
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ ok: true });
+        vi.mocked(page.evaluate).mockResolvedValueOnce({ session: 'site:gemini' });
+
+        await expect(
+            askCommand.func(page, { prompt: 'hello', model: '2.5-flash', timeout: 10, new: 'false' })
+        ).rejects.toBeInstanceOf(CommandExecutionError);
+
+        expect(mocks.selectGeminiModel).not.toHaveBeenCalled();
+        expect(mocks.readGeminiSnapshot).not.toHaveBeenCalled();
+        expect(mocks.sendGeminiMessage).not.toHaveBeenCalled();
     });
 
     // ── Browser Bridge envelope unwrap ───────────────────────────────────
@@ -537,7 +552,7 @@ describe('gemini ask orchestration', () => {
 
         await expect(
             askCommand.func(page, { prompt: 'hello', model: '2.5-flash', timeout: 10, new: 'false' })
-        ).rejects.toBeInstanceOf(ArgumentError);
+        ).rejects.toBeInstanceOf(CommandExecutionError);
     });
 
     // ── Ordering and state ───────────────────────────────────────────────

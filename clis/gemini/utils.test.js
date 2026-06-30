@@ -595,10 +595,24 @@ describe('Gemini model/thinking selection Browser Bridge envelopes', () => {
         vi.mocked(page.evaluate)
             .mockResolvedValueOnce('https://gemini.google.com/app')
             .mockResolvedValueOnce({ session: 'site:gemini', data: { ok: true } })
-            .mockResolvedValueOnce({ session: 'site:gemini', data: { ok: true } });
+            .mockResolvedValueOnce({ session: 'site:gemini', data: { ok: true } })
+            .mockResolvedValueOnce('https://gemini.google.com/app')
+            .mockResolvedValueOnce('2.5-flash');
 
         await expect(selectGeminiModel(page, '2.5-flash')).resolves.toBeUndefined();
 
-        expect(page.evaluate).toHaveBeenCalledTimes(3);
+        expect(page.evaluate).toHaveBeenCalledTimes(5);
+    });
+
+    it('typed-fails when model selection read-back does not match the requested model', async () => {
+        const page = createPageMock();
+        vi.mocked(page.evaluate)
+            .mockResolvedValueOnce('https://gemini.google.com/app')
+            .mockResolvedValueOnce({ session: 'site:gemini', data: { ok: true } })
+            .mockResolvedValueOnce({ session: 'site:gemini', data: { ok: true } })
+            .mockResolvedValueOnce('https://gemini.google.com/app')
+            .mockResolvedValueOnce('2.5-pro');
+
+        await expect(selectGeminiModel(page, '2.5-flash')).rejects.toBeInstanceOf(CommandExecutionError);
     });
 });

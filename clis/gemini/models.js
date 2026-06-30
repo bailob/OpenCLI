@@ -302,7 +302,7 @@ export function discoverModelsScript() {
 
       // Use native .click() — Gemini Web is a React app and synthetic
       // event dispatch may not trigger React's event handlers.
-      try { picker.click(); } catch (_) { return []; }
+      try { picker.click(); } catch (_) { throw new Error('Failed to click Gemini model picker button'); }
 
       ${readMenuAndCloseLogic()}
     })()
